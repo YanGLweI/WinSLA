@@ -1,6 +1,7 @@
 //! WinSLA Management Application
 //!
 //! Launches a local HTTP server + WebView2 native window.
+#![windows_subsystem = "windows"]
 
 use std::sync::{Arc, Mutex};
 
@@ -12,12 +13,25 @@ mod server;
 
 const PORT: u16 = 19830;
 
+/// Get the app data directory (writable location for DB and WebView2 data)
+fn app_data_dir() -> std::path::PathBuf {
+    let base = std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let dir = base.join("WinSLA");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
 fn main() {
     env_logger::init();
 
-    // Open database
-    let db_path = "winsla.db";
-    let db = database::Database::open(db_path).expect("Failed to open database");
+    let data_dir = app_data_dir();
+
+    // Open database in writable location
+    let db_path = data_dir.join("winsla.db");
+    let db = database::Database::open(db_path.to_str().unwrap_or("winsla.db"))
+        .expect("Failed to open database");
     let state = Arc::new(Mutex::new(db));
 
     // Start axum server in a background tokio runtime
@@ -27,13 +41,11 @@ fn main() {
         rt.block_on(async {
             if let Err(e) = server::start_server(server_state, PORT).await {
                 log::error!("Server error: {}", e);
-                eprintln!("Server error: {}", e);
             }
         });
     });
 
     // Wait for server to be ready
-    let url = format!("http://127.0.0.1:{}", PORT);
     for _ in 0..50 {
         std::thread::sleep(std::time::Duration::from_millis(100));
         if std::net::TcpStream::connect(format!("127.0.0.1:{}", PORT)).is_ok() {
@@ -42,6 +54,5 @@ fn main() {
     }
 
     // Launch WebView2 window (blocks until window closed)
-    println!("WinSLA Management starting on {}", url);
-    gui::launch_gui(PORT);
+    gui::launch_gui(PORT, &data_dir);
 }
