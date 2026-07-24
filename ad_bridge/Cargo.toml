@@ -1,0 +1,16 @@
+[package]
+name = "ad-bridge"
+version = "0.1.0"
+edition = "2021"
+authors = ["WinSLA Team"]
+description = "AD/LDAP authentication bridge library"
+
+[dependencies]
+# Workspace dependencies
+serde.workspace = true
+log.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+
+# LDAP support (synchronous API)
+ldap3 = "0.11"

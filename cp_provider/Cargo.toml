@@ -1,0 +1,30 @@
+[package]
+name = "cp_provider"
+version = "0.1.0"
+edition = "2021"
+authors = ["WinSLA Team"]
+description = "Windows Credential Provider for dual-account authentication"
+
+[lib]
+crate-type = ["cdylib"]
+name = "DualAuthCP"
+
+[dependencies]
+# Workspace dependencies
+windows.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+log.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+
+[build-dependencies]
+cc = "1.2"
+
+[[bin]]
+name = "cp_provider"
+path = "src/main.rs"

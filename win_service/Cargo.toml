@@ -1,0 +1,24 @@
+[package]
+name = "winsla-service"
+version = "0.1.0"
+edition = "2021"
+authors = ["WinSLA Team"]
+description = "Windows Service for dual-account authentication bridge"
+
+[[bin]]
+name = "winsla-service"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace dependencies
+tokio.workspace = true
+windows-service.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+log.workspace = true
+env_logger.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+sha2.workspace = true
