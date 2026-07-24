@@ -18,7 +18,7 @@ async function load() {
   try {
     const { data } = await getPolicy()
     form.value = data
-  } catch (e: any) { ElMessage.error('加载失败') }
+  } catch { ElMessage.error('加载失败') }
   loading.value = false
 }
 
@@ -35,28 +35,73 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card v-loading="loading" style="max-width: 600px">
-    <template #header>认证策略配置</template>
+  <div class="page">
+    <div class="page-toolbar">
+      <span class="page-title">认证策略配置</span>
+      <div class="toolbar-actions">
+        <el-button size="small" type="primary" :loading="saving" @click="save">保存配置</el-button>
+      </div>
+    </div>
 
-    <el-form :model="form" label-width="160px" label-position="left">
-      <el-form-item label="最大重试次数">
-        <el-input-number v-model="form.max_retry_count" :min="1" :max="10" />
-      </el-form-item>
-      <el-form-item label="认证超时 (秒)">
-        <el-input-number v-model="form.auth_timeout_secs" :min="5" :max="120" :step="5" />
-      </el-form-item>
-      <el-form-item label="允许应急覆盖">
-        <el-switch v-model="form.allow_emergency_override" />
-      </el-form-item>
-      <el-form-item label="应急需填写原因">
-        <el-switch v-model="form.emergency_requires_reason" />
-      </el-form-item>
-      <el-form-item label="离线缓存">
-        <el-switch v-model="form.offline_cache_enabled" />
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" :loading="saving" @click="save">保存配置</el-button>
-      </el-form-item>
-    </el-form>
-  </el-card>
+    <div class="settings-body" v-loading="loading">
+      <div class="settings-group">
+        <div class="group-title">认证参数</div>
+        <div class="setting-row">
+          <span class="setting-label">最大重试次数</span>
+          <el-input-number v-model="form.max_retry_count" :min="1" :max="10" size="small" />
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">认证超时 (秒)</span>
+          <el-input-number v-model="form.auth_timeout_secs" :min="5" :max="120" :step="5" size="small" />
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="group-title">应急覆盖</div>
+        <div class="setting-row">
+          <span class="setting-label">允许应急覆盖登录</span>
+          <el-switch v-model="form.allow_emergency_override" size="small" />
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">应急登录需填写原因</span>
+          <el-switch v-model="form.emergency_requires_reason" size="small" />
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="group-title">离线模式</div>
+        <div class="setting-row">
+          <span class="setting-label">启用离线缓存</span>
+          <el-switch v-model="form.offline_cache_enabled" size="small" />
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
+
+<style scoped>
+.page { display: flex; flex-direction: column; height: 100%; }
+.page-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 6px 6px 0 0;
+  border-bottom: none;
+}
+.page-title { font-size: 13px; font-weight: 600; color: #1e293b; }
+.toolbar-actions { margin-left: auto; }
+.settings-body {
+  flex: 1; background: #fff; border: 1px solid #e2e8f0;
+  border-radius: 0 0 6px 6px; padding: 16px; overflow-y: auto;
+}
+.settings-group { margin-bottom: 16px; }
+.group-title {
+  font-size: 12px; font-weight: 600; color: #475569;
+  padding-bottom: 6px; margin-bottom: 8px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 0;
+}
+.setting-label { font-size: 12.5px; color: #334155; }
+</style>

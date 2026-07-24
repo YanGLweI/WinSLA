@@ -32,10 +32,16 @@ fn main() {
         });
     });
 
-    // Give server a moment to start
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Wait for server to be ready
+    let url = format!("http://127.0.0.1:{}", PORT);
+    for _ in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if std::net::TcpStream::connect(format!("127.0.0.1:{}", PORT)).is_ok() {
+            break;
+        }
+    }
 
     // Launch WebView2 window (blocks until window closed)
-    println!("WinSLA Management starting on http://127.0.0.1:{}", PORT);
+    println!("WinSLA Management starting on {}", url);
     gui::launch_gui(PORT);
 }

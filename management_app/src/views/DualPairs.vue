@@ -44,57 +44,71 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card>
-    <template #header>
-      <div style="display: flex; justify-content: space-between; align-items: center">
-        <span>双账号配对规则</span>
-        <el-button type="primary" size="small" @click="dialogVisible = true">
-          <el-icon><Plus /></el-icon> 新增配对
-        </el-button>
+  <div class="page">
+    <div class="page-toolbar">
+      <span class="page-title">双账号配对规则</span>
+      <span class="page-count">{{ pairs.length }} 条</span>
+      <div class="toolbar-actions">
+        <el-button size="small" @click="load">刷新</el-button>
+        <el-button size="small" type="primary" @click="dialogVisible = true">+ 新增配对</el-button>
       </div>
-    </template>
+    </div>
 
-    <el-table :data="pairs" v-loading="loading" stripe border style="width: 100%">
-      <el-table-column prop="user_a_name" label="用户 A" min-width="120" />
-      <el-table-column prop="user_b_name" label="用户 B" min-width="120" />
-      <el-table-column prop="user_a_sid" label="SID A" min-width="180" show-overflow-tooltip />
-      <el-table-column prop="user_b_sid" label="SID B" min-width="180" show-overflow-tooltip />
-      <el-table-column label="状态" width="80" align="center">
-        <template #default="{ row }">
-          <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-            {{ row.enabled ? '启用' : '禁用' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="created_at" label="创建时间" width="180" />
-      <el-table-column label="操作" width="80" align="center">
-        <template #default="{ row }">
-          <el-button type="danger" size="small" link @click="handleDelete(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="table-wrap">
+      <el-table :data="pairs" v-loading="loading" size="small" border stripe height="100%">
+        <el-table-column prop="user_a_name" label="用户 A" min-width="110" />
+        <el-table-column prop="user_b_name" label="用户 B" min-width="110" />
+        <el-table-column prop="user_a_sid" label="SID A" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="user_b_sid" label="SID B" min-width="160" show-overflow-tooltip />
+        <el-table-column label="状态" width="64" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">
+              {{ row.enabled ? '启用' : '禁用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="创建时间" width="160" />
+        <el-table-column label="操作" width="60" align="center">
+          <template #default="{ row }">
+            <el-button type="danger" size="small" link @click="handleDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
 
-    <el-empty v-if="!loading && pairs.length === 0" description="暂无配对规则" />
-  </el-card>
-
-  <el-dialog v-model="dialogVisible" title="新增配对规则" width="480px">
-    <el-form :model="form" label-width="90px">
-      <el-form-item label="用户 A">
-        <el-input v-model="form.user_a_name" placeholder="域账号名 (如 DOMAIN\alice)" />
-      </el-form-item>
-      <el-form-item label="用户 A SID">
-        <el-input v-model="form.user_a_sid" placeholder="可选，如 S-1-5-21-..." />
-      </el-form-item>
-      <el-form-item label="用户 B">
-        <el-input v-model="form.user_b_name" placeholder="域账号名 (如 DOMAIN\bob)" />
-      </el-form-item>
-      <el-form-item label="用户 B SID">
-        <el-input v-model="form.user_b_sid" placeholder="可选，如 S-1-5-21-..." />
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="dialogVisible = false">取消</el-button>
-      <el-button type="primary" @click="handleAdd">确认添加</el-button>
-    </template>
-  </el-dialog>
+    <el-dialog v-model="dialogVisible" title="新增配对规则" width="420px" :close-on-click-modal="false">
+      <el-form :model="form" label-width="80px" size="small">
+        <el-form-item label="用户 A">
+          <el-input v-model="form.user_a_name" placeholder="DOMAIN\alice" />
+        </el-form-item>
+        <el-form-item label="SID A">
+          <el-input v-model="form.user_a_sid" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="用户 B">
+          <el-input v-model="form.user_b_name" placeholder="DOMAIN\bob" />
+        </el-form-item>
+        <el-form-item label="SID B">
+          <el-input v-model="form.user_b_sid" placeholder="可选" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button size="small" @click="dialogVisible = false">取消</el-button>
+        <el-button size="small" type="primary" @click="handleAdd">确认</el-button>
+      </template>
+    </el-dialog>
+  </div>
 </template>
+
+<style scoped>
+.page { display: flex; flex-direction: column; height: 100%; }
+.page-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 6px 6px 0 0;
+  border-bottom: none;
+}
+.page-title { font-size: 13px; font-weight: 600; color: #1e293b; }
+.page-count { font-size: 11px; color: #94a3b8; }
+.toolbar-actions { margin-left: auto; display: flex; gap: 6px; }
+.table-wrap { flex: 1; border: 1px solid #e2e8f0; border-radius: 0 0 6px 6px; overflow: hidden; background: #fff; }
+</style>

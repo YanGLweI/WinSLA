@@ -44,51 +44,69 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card>
-    <template #header>
-      <div style="display: flex; justify-content: space-between; align-items: center">
-        <span>应急覆盖账号</span>
-        <el-button type="warning" size="small" @click="dialogVisible = true">
-          <el-icon><Plus /></el-icon> 新增
-        </el-button>
+  <div class="page">
+    <div class="page-toolbar">
+      <span class="page-title">应急覆盖账号</span>
+      <span class="page-count">{{ accounts.length }} 个</span>
+      <div class="toolbar-actions">
+        <el-button size="small" @click="load">刷新</el-button>
+        <el-button size="small" type="warning" @click="dialogVisible = true">+ 新增</el-button>
       </div>
-    </template>
+    </div>
 
-    <el-alert type="warning" :closable="false" style="margin-bottom: 16px">
+    <div class="notice-bar">
       应急账号可在双人验证不可用时单独登录，所有应急登录均记录审计日志。
-    </el-alert>
+    </div>
 
-    <el-table :data="accounts" v-loading="loading" stripe border>
-      <el-table-column prop="username" label="用户名" min-width="120" />
-      <el-table-column prop="sid" label="SID" min-width="200" show-overflow-tooltip />
-      <el-table-column prop="reason" label="原因" min-width="150" show-overflow-tooltip />
-      <el-table-column prop="approved_by" label="审批人" width="100" />
-      <el-table-column prop="activated_at" label="激活时间" width="180" />
-      <el-table-column label="操作" width="80" align="center">
-        <template #default="{ row }">
-          <el-button type="danger" size="small" link @click="handleDelete(row)">移除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="table-wrap">
+      <el-table :data="accounts" v-loading="loading" size="small" border stripe height="100%">
+        <el-table-column prop="username" label="用户名" min-width="100" />
+        <el-table-column prop="sid" label="SID" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="reason" label="原因" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="approved_by" label="审批人" width="80" />
+        <el-table-column prop="activated_at" label="激活时间" width="160" />
+        <el-table-column label="操作" width="60" align="center">
+          <template #default="{ row }">
+            <el-button type="danger" size="small" link @click="handleDelete(row)">移除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
 
-    <el-empty v-if="!loading && accounts.length === 0" description="暂无应急账号" />
-  </el-card>
-
-  <el-dialog v-model="dialogVisible" title="新增应急账号" width="480px">
-    <el-form :model="form" label-width="80px">
-      <el-form-item label="用户名">
-        <el-input v-model="form.username" placeholder="管理员账号名" />
-      </el-form-item>
-      <el-form-item label="SID">
-        <el-input v-model="form.sid" placeholder="S-1-5-21-..." />
-      </el-form-item>
-      <el-form-item label="原因">
-        <el-input v-model="form.reason" type="textarea" placeholder="授权原因说明" />
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="dialogVisible = false">取消</el-button>
-      <el-button type="primary" @click="handleAdd">确认</el-button>
-    </template>
-  </el-dialog>
+    <el-dialog v-model="dialogVisible" title="新增应急账号" width="400px" :close-on-click-modal="false">
+      <el-form :model="form" label-width="60px" size="small">
+        <el-form-item label="用户名">
+          <el-input v-model="form.username" placeholder="管理员账号" />
+        </el-form-item>
+        <el-form-item label="SID">
+          <el-input v-model="form.sid" placeholder="S-1-5-21-..." />
+        </el-form-item>
+        <el-form-item label="原因">
+          <el-input v-model="form.reason" type="textarea" :rows="2" placeholder="授权原因" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button size="small" @click="dialogVisible = false">取消</el-button>
+        <el-button size="small" type="primary" @click="handleAdd">确认</el-button>
+      </template>
+    </el-dialog>
+  </div>
 </template>
+
+<style scoped>
+.page { display: flex; flex-direction: column; height: 100%; }
+.page-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 6px 6px 0 0;
+  border-bottom: none;
+}
+.page-title { font-size: 13px; font-weight: 600; color: #1e293b; }
+.page-count { font-size: 11px; color: #94a3b8; }
+.toolbar-actions { margin-left: auto; display: flex; gap: 6px; }
+.notice-bar {
+  padding: 6px 12px; font-size: 11px; color: #92400e;
+  background: #fef3c7; border: 1px solid #fde68a; border-top: none;
+}
+.table-wrap { flex: 1; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 6px 6px; overflow: hidden; background: #fff; }
+</style>

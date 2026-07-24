@@ -10,26 +10,15 @@ pub fn launch_gui(port: u16) {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("WinSLA Management")
-        .with_inner_size(tao::dpi::LogicalSize::new(1024, 768))
-        .with_min_inner_size(tao::dpi::LogicalSize::new(800, 600))
+        .with_inner_size(tao::dpi::LogicalSize::new(1024, 720))
+        .with_min_inner_size(tao::dpi::LogicalSize::new(860, 560))
         .build(&event_loop)
         .expect("Failed to create window");
 
-    #[cfg(target_os = "windows")]
-    {
-        let _webview = WebViewBuilder::new()
-            .with_url(format!("http://127.0.0.1:{}", port))
-            .build_as_child(&window)
-            .expect("Failed to create WebView2");
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _webview = WebViewBuilder::new()
-            .with_url(format!("http://127.0.0.1:{}", port))
-            .build_gtk(&window)
-            .expect("Failed to create WebView");
-    }
+    let _webview = WebViewBuilder::new()
+        .with_url(format!("http://127.0.0.1:{}", port))
+        .build(&window)
+        .expect("Failed to create WebView2");
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
