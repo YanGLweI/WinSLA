@@ -262,6 +262,15 @@ impl Database {
         accounts.collect()
     }
 
+    /// Remove an emergency account by ID
+    pub fn remove_emergency_account(&self, account_id: &str) -> SqliteResult<bool> {
+        let affected = self.conn.execute(
+            "DELETE FROM emergency_accounts WHERE id = ?1",
+            params![account_id],
+        )?;
+        Ok(affected > 0)
+    }
+
     // ========================================================================
     // Audit Log
     // ========================================================================

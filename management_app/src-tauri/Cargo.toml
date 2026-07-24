@@ -23,9 +23,22 @@ anyhow.workspace = true
 thiserror.workspace = true
 log.workspace = true
 env_logger.workspace = true
+tokio.workspace = true
 
 # SQLite storage
 rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Web server
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+
+# Embedded frontend assets
+rust-embed = "8"
+mime_guess = "2"
+
+# WebView2 native window
+wry = "0.50"
+tao = "0.31"
 
 [build-dependencies]
 winres = "0.1"
