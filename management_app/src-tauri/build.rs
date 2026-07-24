@@ -1,4 +1,14 @@
 fn main() {
+    // Check that frontend assets exist before embedding
+    let dist_dir = std::path::Path::new("frontend/dist");
+    if !dist_dir.exists() {
+        panic!(
+            "Frontend assets not found at 'frontend/dist'. \
+             Run 'npm install && npm run build' in management_app/ first."
+        );
+    }
+    println!("cargo:rerun-if-changed=frontend/dist");
+
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
         let mut res = winres::WindowsResource::new();
         res.set_icon("../../assets/winsla.ico");
