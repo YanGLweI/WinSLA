@@ -36,3 +36,5 @@ winsla.db
 
 # Screenshots (verification only)
 gui-*.png
+
+.qoder/
