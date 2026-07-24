@@ -45,7 +45,7 @@ VIAddVersionKey "LegalCopyright" "MIT License - 2026 WinSLA Contributors"
 
 ; ─── 常量 ───────────────────────────────────────────────────
 !define CP_CLSID "{A5A5A5A5-B6B6-C7C7-D8D8-E9E9E9E9E9E9}"
-!define SERVICE_NAME "WinSLAService"
+!define SERVICE_NAME "WinSLA Service"
 !define PIPE_NAME "winsla-auth-pipe"
 
 ; ─── 安装区段 ───────────────────────────────────────────────
@@ -99,21 +99,22 @@ Section "Register Credential Provider" SecCP
 SectionEnd
 
 Section "Install Windows Service" SecService
-    ; 安装 Windows 服务
-    nsExec::ExecToLog '"$INSTDIR\winsla-service.exe" --install'
+    ; 使用 sc.exe 注册服务 (标准 Windows 方式)
+    nsExec::ExecToLog 'sc.exe create "${SERVICE_NAME}" binPath= "$INSTDIR\winsla-service.exe --service" start= auto'
     Pop $0
 
     ${If} $0 == 0
+        DetailPrint "WinSLA Service 已注册"
         ; 启动服务
         nsExec::ExecToLog 'net start "${SERVICE_NAME}"'
         Pop $0
         ${If} $0 == 0
-            DetailPrint "WinSLA Service 已安装并启动"
+            DetailPrint "WinSLA Service 已启动"
         ${Else}
-            DetailPrint "WinSLA Service 已安装，启动失败 (错误码: $0)"
+            DetailPrint "服务已注册但启动失败 (错误码: $0)，可稍后手动启动"
         ${EndIf}
     ${Else}
-        DetailPrint "服务安装失败 (错误码: $0)，可稍后手动安装"
+        DetailPrint "服务注册失败 (错误码: $0)，可手动运行: sc.exe create ..."
     ${EndIf}
 SectionEnd
 
