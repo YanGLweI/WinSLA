@@ -6,13 +6,15 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode, Uri},
     response::{Html, IntoResponse, Json, Response},
-    routing::{delete, get},
+    routing::{delete, get, post},
     Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::database::Database;
 use crate::commands;
+
+const SERVICE_NAME: &str = "WinSLA Service";
 
 pub type AppState = Arc<Mutex<Database>>;
 
@@ -26,6 +28,10 @@ pub fn create_router(db: AppState) -> Router {
         .route("/api/emergency/{id}", delete(delete_emergency))
         .route("/api/audit", get(list_audit))
         .route("/api/policy", get(get_policy).put(update_policy))
+        .route("/api/service/start", post(service_start))
+        .route("/api/service/stop", post(service_stop))
+        .route("/api/service/restart", post(service_restart))
+        .route("/api/service/config", get(get_service_config).put(set_service_config))
         .fallback(serve_frontend)
         .with_state(db)
 }
@@ -149,6 +155,106 @@ async fn update_policy(State(db): State<AppState>, Json(config): Json<crate::dat
     match db.save_policy(&config) {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+// ─── Service Control ─────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct ServiceActionResult {
+    success: bool,
+    message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ServiceConfig {
+    auto_start: bool,
+}
+
+fn run_sc(args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("sc.exe")
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to execute sc.exe: {}", e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if output.status.success() {
+        Ok(stdout)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        Err(format!("{}{}", stdout, stderr))
+    }
+}
+
+fn run_net(args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("net")
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to execute net: {}", e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if output.status.success() {
+        Ok(stdout)
+    } else {
+        // net start returns error if already running, etc.
+        Err(stdout.trim().to_string())
+    }
+}
+
+async fn service_start() -> Json<ServiceActionResult> {
+    match run_net(&["start", SERVICE_NAME]) {
+        Ok(msg) => Json(ServiceActionResult { success: true, message: msg.trim().to_string() }),
+        Err(msg) => {
+            if msg.contains("已经启动") || msg.contains("already been started") {
+                Json(ServiceActionResult { success: true, message: "服务已在运行中".to_string() })
+            } else {
+                Json(ServiceActionResult { success: false, message: msg })
+            }
+        }
+    }
+}
+
+async fn service_stop() -> Json<ServiceActionResult> {
+    match run_net(&["stop", SERVICE_NAME]) {
+        Ok(msg) => Json(ServiceActionResult { success: true, message: msg.trim().to_string() }),
+        Err(msg) => {
+            if msg.contains("尚未启动") || msg.contains("not been started") {
+                Json(ServiceActionResult { success: true, message: "服务未在运行".to_string() })
+            } else {
+                Json(ServiceActionResult { success: false, message: msg })
+            }
+        }
+    }
+}
+
+async fn service_restart() -> Json<ServiceActionResult> {
+    // Stop then start
+    let _ = run_net(&["stop", SERVICE_NAME]);
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    match run_net(&["start", SERVICE_NAME]) {
+        Ok(msg) => Json(ServiceActionResult { success: true, message: format!("服务已重启\n{}", msg.trim()) }),
+        Err(msg) => Json(ServiceActionResult { success: false, message: msg }),
+    }
+}
+
+async fn get_service_config() -> Json<ServiceConfig> {
+    // Query service start type via sc qc
+    let auto_start = match run_sc(&["qc", SERVICE_NAME]) {
+        Ok(output) => {
+            // AUTO_START means start type is auto
+            output.contains("AUTO_START")
+        }
+        Err(_) => false,
+    };
+    Json(ServiceConfig { auto_start })
+}
+
+async fn set_service_config(Json(config): Json<ServiceConfig>) -> Json<ServiceActionResult> {
+    let start_type = if config.auto_start { "auto" } else { "demand" };
+    match run_sc(&["config", SERVICE_NAME, &format!("start= {}", start_type)]) {
+        Ok(_) => Json(ServiceActionResult {
+            success: true,
+            message: if config.auto_start { "已设置为开机自动启动".to_string() } else { "已设置为手动启动".to_string() },
+        }),
+        Err(msg) => Json(ServiceActionResult { success: false, message: msg }),
     }
 }
 

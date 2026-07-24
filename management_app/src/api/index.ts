@@ -52,6 +52,15 @@ export interface PolicyConfig {
   offline_cache_enabled: boolean
 }
 
+export interface ServiceActionResult {
+  success: boolean
+  message: string
+}
+
+export interface ServiceConfig {
+  auto_start: boolean
+}
+
 export const getStatus = () => api.get<ServiceStatus>('/status')
 export const getPairs = () => api.get<DualPair[]>('/pairs')
 export const addPair = (data: Partial<DualPair>) => api.post('/pairs', data)
@@ -62,5 +71,10 @@ export const deleteEmergency = (id: string) => api.delete(`/emergency/${id}`)
 export const getAudit = (limit = 50) => api.get<AuditEntry[]>('/audit', { params: { limit } })
 export const getPolicy = () => api.get<PolicyConfig>('/policy')
 export const updatePolicy = (data: PolicyConfig) => api.put('/policy', data)
+export const startService = () => api.post<ServiceActionResult>('/service/start')
+export const stopService = () => api.post<ServiceActionResult>('/service/stop')
+export const restartService = () => api.post<ServiceActionResult>('/service/restart')
+export const getServiceConfig = () => api.get<ServiceConfig>('/service/config')
+export const setServiceConfig = (data: ServiceConfig) => api.put<ServiceActionResult>('/service/config', data)
 
 export default api

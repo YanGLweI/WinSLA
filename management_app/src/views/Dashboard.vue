@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getStatus, type ServiceStatus } from '../api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  getStatus, startService, stopService, restartService,
+  getServiceConfig, setServiceConfig,
+  type ServiceStatus, type ServiceConfig
+} from '../api'
 
 const status = ref<ServiceStatus | null>(null)
 const loading = ref(true)
+const svcActionLoading = ref(false)
+const autoStart = ref(false)
 
 async function load() {
   loading.value = true
@@ -14,7 +21,61 @@ async function load() {
   loading.value = false
 }
 
-onMounted(load)
+async function loadConfig() {
+  try {
+    const { data } = await getServiceConfig()
+    autoStart.value = data.auto_start
+  } catch { /* ignore */ }
+}
+
+async function doStart() {
+  svcActionLoading.value = true
+  try {
+    const { data } = await startService()
+    if (data.success) ElMessage.success(data.message || '服务已启动')
+    else ElMessage.error(data.message || '启动失败')
+  } catch (e: any) { ElMessage.error('启动失败: ' + (e.message || '')) }
+  svcActionLoading.value = false
+  setTimeout(load, 1500)
+}
+
+async function doStop() {
+  try {
+    await ElMessageBox.confirm('确认停止 WinSLA 服务？停止后双账号认证将不可用。', '停止服务', { type: 'warning' })
+  } catch { return }
+  svcActionLoading.value = true
+  try {
+    const { data } = await stopService()
+    if (data.success) ElMessage.success(data.message || '服务已停止')
+    else ElMessage.error(data.message || '停止失败')
+  } catch (e: any) { ElMessage.error('停止失败: ' + (e.message || '')) }
+  svcActionLoading.value = false
+  setTimeout(load, 1500)
+}
+
+async function doRestart() {
+  svcActionLoading.value = true
+  try {
+    const { data } = await restartService()
+    if (data.success) ElMessage.success('服务已重启')
+    else ElMessage.error(data.message || '重启失败')
+  } catch (e: any) { ElMessage.error('重启失败: ' + (e.message || '')) }
+  svcActionLoading.value = false
+  setTimeout(load, 1500)
+}
+
+async function toggleAutoStart(val: boolean) {
+  try {
+    const { data } = await setServiceConfig({ auto_start: val })
+    if (data.success) ElMessage.success(data.message)
+    else { ElMessage.error(data.message); autoStart.value = !val }
+  } catch {
+    ElMessage.error('设置失败')
+    autoStart.value = !val
+  }
+}
+
+onMounted(() => { load(); loadConfig() })
 </script>
 
 <template>
@@ -29,6 +90,15 @@ onMounted(load)
             {{ status?.running ? '运行中' : '已停止' }}
           </div>
           <div class="status-meta">版本 {{ status?.version || '-' }}</div>
+          <div class="svc-controls">
+            <el-button size="small" type="success" :loading="svcActionLoading" @click="doStart" :disabled="status?.running">启动</el-button>
+            <el-button size="small" type="danger" :loading="svcActionLoading" @click="doStop" :disabled="!status?.running">停止</el-button>
+            <el-button size="small" type="warning" :loading="svcActionLoading" @click="doRestart">重启</el-button>
+          </div>
+          <div class="autostart-row">
+            <span class="autostart-label">开机自动启动</span>
+            <el-switch v-model="autoStart" size="small" @change="toggleAutoStart" />
+          </div>
         </div>
       </section>
 
@@ -106,6 +176,9 @@ onMounted(load)
 .status-indicator.online .dot { background: #22c55e; box-shadow: 0 0 6px #22c55e88; }
 .status-indicator.offline .dot { background: #ef4444; box-shadow: 0 0 6px #ef444488; }
 .status-meta { font-size: 11px; color: #94a3b8; }
+.svc-controls { display: flex; gap: 6px; margin-top: 4px; }
+.autostart-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.autostart-label { font-size: 12px; color: #64748b; }
 
 /* Stats */
 .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
