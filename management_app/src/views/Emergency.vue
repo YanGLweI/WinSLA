@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getEmergency, addEmergency, deleteEmergency, type EmergencyAccount } from '../api'
+import { getEmergency, addEmergency, deleteEmergency, validateAccount, type EmergencyAccount } from '../api'
 
 const accounts = ref<EmergencyAccount[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
-const form = ref({ sid: '', username: '', reason: '' })
+
+const form = ref({ username: '', password: '', sid: '', reason: '' })
+const validating = ref(false)
+const validated = ref(false)
 
 async function load() {
   loading.value = true
@@ -17,18 +20,48 @@ async function load() {
   loading.value = false
 }
 
+async function doValidate() {
+  if (!form.value.username || !form.value.password) {
+    ElMessage.warning('请填写用户名和密码')
+    return
+  }
+  validating.value = true
+  validated.value = false
+  try {
+    const { data } = await validateAccount({ username: form.value.username, password: form.value.password })
+    if (data.success) {
+      form.value.sid = data.sid
+      form.value.username = data.display_name
+      validated.value = true
+      ElMessage.success(data.message)
+    } else {
+      ElMessage.error(data.message)
+    }
+  } catch (e: any) { ElMessage.error('验证失败: ' + e.message) }
+  validating.value = false
+}
+
 async function handleAdd() {
-  if (!form.value.username || !form.value.sid) {
-    ElMessage.warning('请填写用户名和 SID')
+  if (!validated.value) {
+    ElMessage.warning('请先验证账号')
+    return
+  }
+  if (!form.value.reason) {
+    ElMessage.warning('请填写授权原因')
     return
   }
   try {
-    await addEmergency(form.value)
+    await addEmergency({ sid: form.value.sid, username: form.value.username, reason: form.value.reason })
     ElMessage.success('添加成功')
     dialogVisible.value = false
-    form.value = { sid: '', username: '', reason: '' }
+    resetForm()
     load()
   } catch (e: any) { ElMessage.error('添加失败: ' + e.message) }
+}
+
+function resetForm() {
+  form.value = { username: '', password: '', sid: '', reason: '' }
+  validated.value = false
 }
 
 async function handleDelete(row: EmergencyAccount) {
@@ -60,7 +93,7 @@ onMounted(load)
 
     <div class="table-wrap">
       <el-table :data="accounts" v-loading="loading" size="small" border stripe height="100%">
-        <el-table-column prop="username" label="用户名" min-width="100" />
+        <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column prop="sid" label="SID" min-width="180" show-overflow-tooltip />
         <el-table-column prop="reason" label="原因" min-width="140" show-overflow-tooltip />
         <el-table-column prop="approved_by" label="审批人" width="80" />
@@ -73,21 +106,25 @@ onMounted(load)
       </el-table>
     </div>
 
-    <el-dialog v-model="dialogVisible" title="新增应急账号" width="400px" :close-on-click-modal="false">
-      <el-form :model="form" label-width="60px" size="small">
+    <el-dialog v-model="dialogVisible" title="新增应急账号" width="420px" :close-on-click-modal="false" @closed="resetForm">
+      <el-form label-width="70px" size="small">
         <el-form-item label="用户名">
-          <el-input v-model="form.username" placeholder="管理员账号" />
+          <el-input v-model="form.username" placeholder="DOMAIN\admin 或 admin@domain.com" :disabled="validated" />
         </el-form-item>
-        <el-form-item label="SID">
-          <el-input v-model="form.sid" placeholder="S-1-5-21-..." />
+        <el-form-item label="密码">
+          <el-input v-model="form.password" type="password" show-password placeholder="域账号密码" :disabled="validated" />
         </el-form-item>
-        <el-form-item label="原因">
-          <el-input v-model="form.reason" type="textarea" :rows="2" placeholder="授权原因" />
+        <el-form-item>
+          <el-button v-if="!validated" type="primary" size="small" :loading="validating" @click="doValidate">验证账号</el-button>
+          <el-tag v-else type="success" size="small">已验证: {{ form.sid }}</el-tag>
+        </el-form-item>
+        <el-form-item label="授权原因">
+          <el-input v-model="form.reason" type="textarea" :rows="2" placeholder="说明为何需要应急访问权限" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button size="small" @click="dialogVisible = false">取消</el-button>
-        <el-button size="small" type="primary" @click="handleAdd">确认</el-button>
+        <el-button size="small" type="primary" :disabled="!validated || !form.reason" @click="handleAdd">确认添加</el-button>
       </template>
     </el-dialog>
   </div>

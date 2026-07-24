@@ -24,6 +24,7 @@ thiserror.workspace = true
 log.workspace = true
 env_logger.workspace = true
 tokio.workspace = true
+windows.workspace = true
 
 # SQLite storage
 rusqlite = { version = "0.32", features = ["bundled"] }

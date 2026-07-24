@@ -9,7 +9,7 @@
 ; ─── 基本信息 ───────────────────────────────────────────────
 Name "WinSLA v0.0.1"
 OutFile "WinSLA-v0.0.1-Setup.exe"
-InstallDir "$SYSDIR\winsla"
+InstallDir "$PROGRAMFILES\WinSLA"
 InstallDirRegKey HKLM "Software\WinSLA" "InstallDir"
 RequestExecutionLevel admin
 Unicode true
@@ -46,7 +46,7 @@ UninstallIcon "..\assets\winsla.ico"
 !insertmacro MUI_LANGUAGE "English"
 
 ; ─── 常量 ───────────────────────────────────────────────────
-!define CP_CLSID "{A5A5A5A5-B6B6-C7C7-D8D8-E9E9E9E9E9E9}"
+!define CP_CLSID "{E4D9F6E7-8A2B-4C3D-9E5F-1A2B3C4D5E6F}"
 !define SERVICE_NAME "WinSLA Service"
 !define PIPE_NAME "winsla-auth-pipe"
 
@@ -123,11 +123,16 @@ SectionEnd
 
 Section "Start Menu Shortcuts" SecShortcuts
     CreateDirectory "$SMPROGRAMS\WinSLA"
-    CreateShortcut "$SMPROGRAMS\WinSLA\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe"
+    CreateShortcut "$SMPROGRAMS\WinSLA\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe" "" "$INSTDIR\winsla.ico" 0
     CreateShortcut "$SMPROGRAMS\WinSLA\Uninstall WinSLA.lnk" "$INSTDIR\uninstall.exe"
 
-    ; 桌面快捷方式 (直接引用 .ico 文件确保图标显示)
+    ; 桌面快捷方式 (先删除旧的，再创建新的)
+    Delete "$DESKTOP\WinSLA Management.lnk"
     CreateShortcut "$DESKTOP\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe" "" "$INSTDIR\winsla.ico" 0
+
+    ; 刷新图标缓存
+    nsExec::ExecToLog 'ie4uinit.exe -show'
+    Pop $0
 SectionEnd
 
 ; ─── 卸载区段 ───────────────────────────────────────────────

@@ -38,11 +38,16 @@ pub struct AuditEntry {
     pub error_message: Option<String>,
 }
 
-/// Get the current service status
+/// Get the current service status by querying Windows SCM
 pub fn get_service_status() -> Result<ServiceStatus, String> {
-    // In production, query the Windows Service via SCM or named pipe
+    let output = std::process::Command::new("sc.exe")
+        .args(["query", "WinSLA Service"])
+        .output()
+        .map_err(|e| format!("Failed to query service: {}", e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let running = stdout.contains("RUNNING");
     Ok(ServiceStatus {
-        running: false,
+        running,
         version: env!("CARGO_PKG_VERSION").to_string(),
         connections_accepted: 0,
         successful_auths: 0,

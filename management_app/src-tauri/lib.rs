@@ -7,3 +7,4 @@ pub mod database;
 pub mod frontend;
 pub mod gui;
 pub mod server;
+pub mod wincred;

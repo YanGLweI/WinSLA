@@ -10,6 +10,7 @@ mod database;
 mod frontend;
 mod gui;
 mod server;
+mod wincred;
 
 const PORT: u16 = 19830;
 

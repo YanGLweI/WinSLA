@@ -32,6 +32,7 @@ pub fn create_router(db: AppState) -> Router {
         .route("/api/service/stop", post(service_stop))
         .route("/api/service/restart", post(service_restart))
         .route("/api/service/config", get(get_service_config).put(set_service_config))
+        .route("/api/validate-account", post(validate_account))
         .fallback(serve_frontend)
         .with_state(db)
 }
@@ -255,6 +256,39 @@ async fn set_service_config(Json(config): Json<ServiceConfig>) -> Json<ServiceAc
             message: if config.auto_start { "已设置为开机自动启动".to_string() } else { "已设置为手动启动".to_string() },
         }),
         Err(msg) => Json(ServiceActionResult { success: false, message: msg }),
+    }
+}
+
+// ─── Account Validation ──────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ValidateAccountRequest {
+    username: String,
+    password: String,
+}
+
+#[derive(Serialize)]
+struct ValidateAccountResponse {
+    success: bool,
+    sid: String,
+    display_name: String,
+    message: String,
+}
+
+async fn validate_account(Json(req): Json<ValidateAccountRequest>) -> Json<ValidateAccountResponse> {
+    match crate::wincred::validate_and_resolve(&req.username, &req.password) {
+        Ok((sid, display_name)) => Json(ValidateAccountResponse {
+            success: true,
+            sid,
+            display_name: display_name.clone(),
+            message: format!("验证成功: {}", display_name),
+        }),
+        Err(msg) => Json(ValidateAccountResponse {
+            success: false,
+            sid: String::new(),
+            display_name: String::new(),
+            message: msg,
+        }),
     }
 }
 

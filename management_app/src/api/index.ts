@@ -61,6 +61,13 @@ export interface ServiceConfig {
   auto_start: boolean
 }
 
+export interface ValidateAccountResult {
+  success: boolean
+  sid: string
+  display_name: string
+  message: string
+}
+
 export const getStatus = () => api.get<ServiceStatus>('/status')
 export const getPairs = () => api.get<DualPair[]>('/pairs')
 export const addPair = (data: Partial<DualPair>) => api.post('/pairs', data)
@@ -76,5 +83,7 @@ export const stopService = () => api.post<ServiceActionResult>('/service/stop')
 export const restartService = () => api.post<ServiceActionResult>('/service/restart')
 export const getServiceConfig = () => api.get<ServiceConfig>('/service/config')
 export const setServiceConfig = (data: ServiceConfig) => api.put<ServiceActionResult>('/service/config', data)
+export const validateAccount = (data: { username: string; password: string }) =>
+  api.post<ValidateAccountResult>('/validate-account', data)
 
 export default api

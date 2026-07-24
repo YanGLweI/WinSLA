@@ -10,9 +10,13 @@ pub mod credential_provider;
 pub mod ui_controls;
 pub mod dual_auth_credential;
 pub mod pipe_client;
+pub mod class_factory;
+pub mod provider_com;
+pub mod credential_com;
 
 use std::ffi::c_void;
 use windows::Win32::Foundation::BOOL;
+use windows::core::GUID;
 
 // Re-export key types
 pub use dual_auth_credential::CLSID_DUAL_AUTH_PROVIDER;
@@ -27,11 +31,9 @@ pub extern "system" fn DllMain(
 ) -> BOOL {
     match dwreason {
         1 /* DLL_PROCESS_ATTACH */ => {
-            log::info!("DualAuthCP DLL loaded");
+            // Disable thread library calls for performance
         }
-        0 /* DLL_PROCESS_DETACH */ => {
-            log::info!("DualAuthCP DLL unloaded");
-        }
+        0 /* DLL_PROCESS_DETACH */ => {}
         _ => {}
     }
     BOOL::from(true)
@@ -41,33 +43,63 @@ pub extern "system" fn DllMain(
 /// Called by COM runtime to get the class factory for our CP
 #[no_mangle]
 pub extern "system" fn DllGetClassObject(
-    _rclsid: *const c_void,
-    _riid: *const c_void,
-    _ppv: *mut *mut c_void,
+    rclsid: *const c_void,
+    riid: *const c_void,
+    ppv: *mut *mut c_void,
 ) -> i32 {
-    // TODO: Implement full COM class factory
-    // For now return E_NOTIMPL
-    log::debug!("DllGetClassObject called");
-    -2147467263i32 // E_NOTIMPL
+    unsafe {
+        if rclsid.is_null() || riid.is_null() || ppv.is_null() {
+            return -2147024809i32; // E_INVALIDARG
+        }
+
+        let clsid = &*(rclsid as *const GUID);
+
+        // Check if the requested CLSID matches our provider
+        if *clsid != CLSID_DUAL_AUTH_PROVIDER {
+            *ppv = std::ptr::null_mut();
+            return -2147467262i32; // CLASS_E_CLASSNOTAVAILABLE
+        }
+
+        // Create the class factory
+        let factory = class_factory::create_class_factory();
+        if factory.is_null() {
+            *ppv = std::ptr::null_mut();
+            return -2147467259i32; // E_OUTOFMEMORY
+        }
+
+        // QueryInterface on the factory for the requested IID
+        let vtable = *(factory as *const *const c_void);
+        let qi_fn = (*(vtable as *const class_factory::ClassFactoryVTable)).query_interface;
+        let hr = qi_fn(factory, riid as *const GUID, ppv);
+
+        // Release our initial reference
+        let rel_fn = (*(vtable as *const class_factory::ClassFactoryVTable)).release;
+        rel_fn(factory);
+
+        hr
+    }
 }
 
 /// COM registration export - DllCanUnloadNow
 #[no_mangle]
 pub extern "system" fn DllCanUnloadNow() -> i32 {
-    0 // S_OK - can unload
+    if class_factory::can_unload_now() {
+        0 // S_OK - can unload
+    } else {
+        1 // S_FALSE - cannot unload yet
+    }
 }
 
 /// COM self-registration export
 #[no_mangle]
 pub extern "system" fn DllRegisterServer() -> i32 {
-    log::info!("DllRegisterServer called");
-    // Registration is handled by install.ps1 script
+    // Registration is handled by NSIS installer / install.ps1 script
     0 // S_OK
 }
 
 /// COM self-unregistration export
 #[no_mangle]
 pub extern "system" fn DllUnregisterServer() -> i32 {
-    log::info!("DllUnregisterServer called");
+    // Unregistration is handled by NSIS uninstaller / unregister.ps1 script
     0 // S_OK
 }
