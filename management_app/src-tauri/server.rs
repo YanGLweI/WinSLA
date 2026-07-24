@@ -173,8 +173,10 @@ struct ServiceConfig {
 }
 
 fn run_sc(args: &[&str]) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
     let output = std::process::Command::new("sc.exe")
         .args(args)
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .output()
         .map_err(|e| format!("Failed to execute sc.exe: {}", e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -187,8 +189,10 @@ fn run_sc(args: &[&str]) -> Result<String, String> {
 }
 
 fn run_net(args: &[&str]) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
     let output = std::process::Command::new("net")
         .args(args)
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .output()
         .map_err(|e| format!("Failed to execute net: {}", e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();

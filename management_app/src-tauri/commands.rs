@@ -4,6 +4,9 @@
 //! to the Vue frontend via Tauri commands.
 
 use serde::{Deserialize, Serialize};
+use std::os::windows::process::CommandExt;
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Service status information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +45,7 @@ pub struct AuditEntry {
 pub fn get_service_status() -> Result<ServiceStatus, String> {
     let output = std::process::Command::new("sc.exe")
         .args(["query", "WinSLA Service"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("Failed to query service: {}", e))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
