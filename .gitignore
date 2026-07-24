@@ -30,3 +30,9 @@ installer/*.exe
 
 # Tauri
 management_app/src-tauri/target/
+
+# Runtime database
+winsla.db
+
+# Screenshots (verification only)
+gui-*.png
