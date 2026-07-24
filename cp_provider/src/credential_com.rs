@@ -8,12 +8,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows::core::GUID;
 
-// ICredentialProviderCredential IID
+// ICredentialProviderCredential IID: {63913a93-40c1-481a-818d-4072ff8c70cc}
 pub const IID_ICREDENTIAL_PROVIDER_CREDENTIAL: GUID = GUID {
-    data1: 0x87387110,
-    data2: 0x4B45,
-    data3: 0x4B18,
-    data4: [0x9E, 0x46, 0x93, 0xB1, 0xE4, 0xB0, 0xE4, 0xB5],
+    data1: 0x63913a93,
+    data2: 0x40c1,
+    data3: 0x481a,
+    data4: [0x81, 0x8d, 0x40, 0x72, 0xff, 0x8c, 0x70, 0xcc],
 };
 
 // Field indices
@@ -34,9 +34,9 @@ const CPFS_DISPLAY_IN_BOTH: u32 = 3;
 const CPFIS_NONE: u32 = 0;
 const CPFIS_FOCUSED: u32 = 3;
 
-// GetSerialization responses
-const CPGSR_NO_CREDENTIAL_FINISHED: u32 = 0;
-const CPGSR_CREDENTIAL_FINISHED: u32 = 1;
+// GetSerialization responses (CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE)
+const CPGSR_NO_CREDENTIAL_NOT_FINISHED: u32 = 0;
+const CPGSR_RETURN_CREDENTIAL_FINISHED: u32 = 2;
 
 // Status icons
 const CPSI_NONE: u32 = 0;
@@ -309,7 +309,7 @@ unsafe extern "system" fn cred_get_serialization(
 
     // If already authenticated, return the serialized credential
     if c.auth_success {
-        *response = CPGSR_CREDENTIAL_FINISHED;
+        *response = CPGSR_RETURN_CREDENTIAL_FINISHED;
         return 0;
     }
 
@@ -321,7 +321,7 @@ unsafe extern "system" fn cred_get_serialization(
 
     if user_a.is_empty() || pass_a.is_empty() || user_b.is_empty() || pass_b.is_empty() {
         set_status(c, status_text, status_icon, "Please fill in all fields", CPSI_ERROR);
-        *response = CPGSR_NO_CREDENTIAL_FINISHED;
+        *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
         return 0;
     }
 
@@ -336,7 +336,7 @@ unsafe extern "system" fn cred_get_serialization(
             c.serialized_user = to_wide(&user_a);
             c.serialized_pass = to_wide(&pass_a);
             set_status(c, status_text, status_icon, "Authentication successful!", CPSI_SUCCESS);
-            *response = CPGSR_CREDENTIAL_FINISHED;
+            *response = CPGSR_RETURN_CREDENTIAL_FINISHED;
 
             // Fill the serialization structure with User A's credentials
             // The serialization struct is CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION
@@ -346,27 +346,27 @@ unsafe extern "system" fn cred_get_serialization(
         }
         Ok(AuthResponse::FailUserA(msg)) => {
             set_status(c, status_text, status_icon, &format!("User A failed: {}", msg), CPSI_ERROR);
-            *response = CPGSR_NO_CREDENTIAL_FINISHED;
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
         Ok(AuthResponse::FailUserB(msg)) => {
             set_status(c, status_text, status_icon, &format!("User B failed: {}", msg), CPSI_ERROR);
-            *response = CPGSR_NO_CREDENTIAL_FINISHED;
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
         Ok(AuthResponse::BothFailed(a, b)) => {
             set_status(c, status_text, status_icon, &format!("Both failed: {} | {}", a, b), CPSI_ERROR);
-            *response = CPGSR_NO_CREDENTIAL_FINISHED;
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
         Ok(_) => {
             set_status(c, status_text, status_icon, "Authentication failed", CPSI_ERROR);
-            *response = CPGSR_NO_CREDENTIAL_FINISHED;
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
         Err(e) => {
             set_status(c, status_text, status_icon, &format!("Service error: {}", e), CPSI_ERROR);
-            *response = CPGSR_NO_CREDENTIAL_FINISHED;
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
     }
