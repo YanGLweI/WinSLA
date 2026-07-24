@@ -122,6 +122,9 @@ Section "Start Menu Shortcuts" SecShortcuts
     CreateDirectory "$SMPROGRAMS\WinSLA"
     CreateShortcut "$SMPROGRAMS\WinSLA\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe"
     CreateShortcut "$SMPROGRAMS\WinSLA\Uninstall WinSLA.lnk" "$INSTDIR\uninstall.exe"
+
+    ; 桌面快捷方式
+    CreateShortcut "$DESKTOP\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe" "" "$INSTDIR\winsla-management.exe" 0
 SectionEnd
 
 ; ─── 卸载区段 ───────────────────────────────────────────────
@@ -138,7 +141,8 @@ Section "Uninstall"
     DeleteRegKey HKLM "Software\WinSLA"
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA"
 
-    ; 删除开始菜单
+    ; 删除开始菜单和桌面快捷方式
+    Delete "$DESKTOP\WinSLA Management.lnk"
     Delete "$SMPROGRAMS\WinSLA\WinSLA Management.lnk"
     Delete "$SMPROGRAMS\WinSLA\Uninstall WinSLA.lnk"
     RMDir "$SMPROGRAMS\WinSLA"
