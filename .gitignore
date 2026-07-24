@@ -25,5 +25,8 @@ Thumbs.db
 .env
 *.log
 
+# NSIS output
+installer/*.exe
+
 # Tauri
 management_app/src-tauri/target/
