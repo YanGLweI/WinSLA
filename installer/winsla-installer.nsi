@@ -1,5 +1,5 @@
 ﻿; WinSLA - Windows Dual-Account Authentication System
-; NSIS Installer Script v1.0.0
+; NSIS Installer Script v1.0.1
 ; Requires: NSIS 3.x
 
 !include "MUI2.nsh"
@@ -7,17 +7,17 @@
 !include "x64.nsh"
 
 ; ─── 基本信息 ───────────────────────────────────────────────
-Name "WinSLA v1.0.0"
-OutFile "WinSLA-v1.0.0-Setup.exe"
+Name "WinSLA v1.0.1"
+OutFile "WinSLA-v1.0.1-Setup.exe"
 InstallDir "$PROGRAMFILES\WinSLA"
 InstallDirRegKey HKLM "Software\WinSLA" "InstallDir"
 RequestExecutionLevel admin
 Unicode true
 
 ; ─── 版本信息 ───────────────────────────────────────────────
-VIProductVersion "1.0.0.0"
+VIProductVersion "1.0.1.0"
 VIAddVersionKey "ProductName" "WinSLA"
-VIAddVersionKey "FileVersion" "1.0.0"
+VIAddVersionKey "FileVersion" "1.0.1"
 VIAddVersionKey "FileDescription" "Windows Dual-Account Authentication System"
 VIAddVersionKey "LegalCopyright" "MIT License - 2026 WinSLA Contributors"
 
@@ -70,7 +70,7 @@ Section "Core Files" SecCore
 
     ; 写入安装路径到注册表
     WriteRegStr HKLM "Software\WinSLA" "InstallDir" "$INSTDIR"
-    WriteRegStr HKLM "Software\WinSLA" "Version" "1.0.0"
+    WriteRegStr HKLM "Software\WinSLA" "Version" "1.0.1"
 
     ; 创建卸载程序
     WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -79,7 +79,7 @@ Section "Core Files" SecCore
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "UninstallString" "$INSTDIR\uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
-        "DisplayVersion" "1.0.0"
+        "DisplayVersion" "1.0.1"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "Publisher" "WinSLA Contributors"
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
