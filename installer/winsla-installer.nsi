@@ -61,6 +61,7 @@ Section "Core Files" SecCore
     File "..\target\release\DualAuthCP.dll"
     File "..\target\release\winsla-service.exe"
     File "..\target\release\winsla-management.exe"
+    File "..\assets\winsla.ico"
 
     ; 复制脚本
     SetOutPath "$INSTDIR\scripts"
@@ -125,8 +126,8 @@ Section "Start Menu Shortcuts" SecShortcuts
     CreateShortcut "$SMPROGRAMS\WinSLA\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe"
     CreateShortcut "$SMPROGRAMS\WinSLA\Uninstall WinSLA.lnk" "$INSTDIR\uninstall.exe"
 
-    ; 桌面快捷方式
-    CreateShortcut "$DESKTOP\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe" "" "$INSTDIR\winsla-management.exe" 0
+    ; 桌面快捷方式 (直接引用 .ico 文件确保图标显示)
+    CreateShortcut "$DESKTOP\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe" "" "$INSTDIR\winsla.ico" 0
 SectionEnd
 
 ; ─── 卸载区段 ───────────────────────────────────────────────
@@ -153,6 +154,7 @@ Section "Uninstall"
     Delete "$INSTDIR\DualAuthCP.dll"
     Delete "$INSTDIR\winsla-service.exe"
     Delete "$INSTDIR\winsla-management.exe"
+    Delete "$INSTDIR\winsla.ico"
     Delete "$INSTDIR\scripts\install.ps1"
     Delete "$INSTDIR\scripts\unregister.ps1"
     Delete "$INSTDIR\uninstall.exe"
