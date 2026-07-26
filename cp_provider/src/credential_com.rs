@@ -536,13 +536,31 @@ unsafe extern "system" fn cred_get_serialization(
 }
 
 unsafe extern "system" fn cred_report_result(
-    _this: *mut c_void, ntstatus: i32, substatus: i32,
+    this: *mut c_void, ntstatus: i32, substatus: i32,
     _status_text: *mut *mut u16, _status_icon: *mut u32,
 ) -> i32 {
     crate::provider_com::trace(&format!(
         "ReportResult: ntstatus=0x{:08X} substatus=0x{:08X}",
         ntstatus as u32, substatus as u32
     ));
+    // If the LSA logon failed (any NT_ERROR status, i.e. negative), invalidate the
+    // cached authentication so the next GetSerialization re-reads the (possibly
+    // corrected) input fields and re-validates against the service.
+    //
+    // Without this, a wrong password captured on the first attempt would be cached in
+    // `serialized_pass` and re-sent on every retry forever -- because GetSerialization
+    // short-circuits on `auth_success == true` and never re-reads the fields. This
+    // manifested as a permanent "username or password is incorrect" loop that retyping
+    // the correct credentials could not escape (especially at fresh boot, where a single
+    // mistyped first attempt poisoned all subsequent attempts).
+    if ntstatus < 0 {
+        let c = &mut *(this as *mut DualAuthCredentialCom);
+        c.auth_success = false;
+        c.serialized_pass = to_wide("");
+        crate::provider_com::trace(
+            "ReportResult: logon failed, cleared cached auth_success so fields are re-read on next submit",
+        );
+    }
     0 // S_OK - acknowledge the result
 }
 
