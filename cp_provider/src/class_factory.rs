@@ -61,6 +61,11 @@ unsafe extern "system" fn class_factory_query_interface(
     // IClassFactory: {00000001-0000-0000-C000-000000000046}
     let iid_iclassfactory = GUID::from_u128(0x00000001_0000_0000_C000_000000000046);
 
+    crate::provider_com::trace(&format!(
+        "ClassFactory::QI riid={:08X}-{:04X}-{:04X}",
+        iid.data1, iid.data2, iid.data3
+    ));
+
     if *iid == iid_iunknown || *iid == iid_iclassfactory {
         *ppv = this;
         class_factory_add_ref(this);
@@ -94,6 +99,10 @@ unsafe extern "system" fn class_factory_create_instance(
     riid: *const GUID,
     ppv: *mut *mut c_void,
 ) -> i32 {
+    crate::provider_com::trace(&format!(
+        "ClassFactory::CreateInstance outer={:p} riid={:p}",
+        outer, riid
+    ));
     if !outer.is_null() {
         return -2147467260i32; // CLASS_E_NOAGGREGATION
     }

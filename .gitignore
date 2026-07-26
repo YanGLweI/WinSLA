@@ -37,4 +37,14 @@ winsla.db
 # Screenshots (verification only)
 gui-*.png
 
+# Debugging / crash-dump artifacts
+*.dmp
+*.hdmp
+*.bin
+credprovhost_*
+ucrtbase_vm.dll
+vm_deployed_*.dll
+*_vm.dll
+cp_trace*.log
+
 .qoder/

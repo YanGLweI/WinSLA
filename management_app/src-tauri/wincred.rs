@@ -113,8 +113,9 @@ pub fn validate_and_resolve(username: &str, password: &str) -> Result<(String, S
         }
 
         // Build display name from resolved domain
-        let resolved_domain = if domain_size > 1 {
-            String::from_utf16_lossy(&domain_buf[..(domain_size - 1) as usize])
+        // Note: after successful LookupAccountNameW, domain_size = chars WITHOUT null
+        let resolved_domain = if domain_size > 0 {
+            String::from_utf16_lossy(&domain_buf[..domain_size as usize])
         } else {
             domain.clone()
         };

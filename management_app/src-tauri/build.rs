@@ -14,7 +14,9 @@ fn main() {
         res.set_icon("../../assets/winsla.ico");
         res.set("ProductName", "WinSLA Management");
         res.set("FileDescription", "WinSLA Dual-Account Authentication Management");
-        res.set("LegalCopyright", "MIT License - WinSLA Contributors");
+        res.set("LegalCopyright", "MIT License - ylw");
+        res.set("FileVersion", "2.0.0");
+        res.set("ProductVersion", "2.0.0");
         res.compile().expect("Failed to compile Windows resources");
     }
 }

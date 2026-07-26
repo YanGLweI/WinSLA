@@ -1,8 +1,8 @@
 [package]
 name = "cp_provider"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
-authors = ["WinSLA Team"]
+authors = ["ylw"]
 description = "Windows Credential Provider for dual-account authentication"
 
 [lib]
@@ -21,6 +21,10 @@ uuid.workspace = true
 chrono.workspace = true
 sha2.workspace = true
 hmac.workspace = true
+
+[features]
+default = []
+empty_serialization_test = []
 
 [build-dependencies]
 cc = "1.2"

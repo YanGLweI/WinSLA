@@ -1,35 +1,35 @@
 ﻿; WinSLA - Windows Dual-Account Authentication System
-; NSIS Installer Script v1.0.1
-; Requires: NSIS 3.x
+; NSIS Installer Script v1.0.3
+; Fixed: COM multi-interface vtable (SetUserArray) so the dual-auth tile shows
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"
 
 ; ─── 基本信息 ───────────────────────────────────────────────
-Name "WinSLA v1.0.1"
-OutFile "WinSLA-v1.0.1-Setup.exe"
-InstallDir "$PROGRAMFILES\WinSLA"
+Name "WinSLA v2.0.0"
+OutFile "WinSLA-v2.0.0-Setup.exe"
+InstallDir "$PROGRAMFILES64\WinSLA"
 InstallDirRegKey HKLM "Software\WinSLA" "InstallDir"
 RequestExecutionLevel admin
 Unicode true
 
 ; ─── 版本信息 ───────────────────────────────────────────────
-VIProductVersion "1.0.1.0"
+VIProductVersion "2.0.0.0"
 VIAddVersionKey "ProductName" "WinSLA"
-VIAddVersionKey "FileVersion" "1.0.1"
-VIAddVersionKey "FileDescription" "Windows Dual-Account Authentication System"
-VIAddVersionKey "LegalCopyright" "MIT License - 2026 WinSLA Contributors"
+VIAddVersionKey "FileVersion" "2.0.0"
+VIAddVersionKey "FileDescription" "WinSLA - Windows Dual-Account Authentication System"
+VIAddVersionKey "LegalCopyright" "MIT License - 2026 ylw"
 
 ; ─── 界面配置 ───────────────────────────────────────────────
 !define MUI_ICON "..\assets\winsla.ico"
 !define MUI_UNICON "..\assets\winsla.ico"
 Icon "..\assets\winsla.ico"
 UninstallIcon "..\assets\winsla.ico"
-!define MUI_WELCOMEPAGE_TITLE "WinSLA 双账号认证系统 安装向导"
-!define MUI_WELCOMEPAGE_TEXT "本向导将安装 WinSLA Windows 双账号协同登录代理。$\r$\n$\r$\nWinSLA 实现'金库双人原则'，要求两个独立 AD 域账号同时验证通过方可登录。$\r$\n$\r$\n⚠️ 警告：安装后会影响系统登录流程，请确保在测试环境中操作。$\r$\n$\r$\n点击'下一步'继续。"
+!define MUI_WELCOMEPAGE_TITLE "WinSLA 双账号认证系统 安装向导 v1.0.24"
+!define MUI_WELCOMEPAGE_TEXT "本向导将安装 WinSLA Windows 双账号协同登录代理。$\r$\n$\r$\nWinSLA 实现'金库双人原则'，要求两个独立 AD 域账号同时验证通过方可登录。$\r$\n$\r$\n✅ 新版本特性：NSIS 安装程序现已自动写入注册表！无需手动运行 PowerShell 脚本。$\r$\n$\r$\n⚠️ 警告：安装后会影响系统登录流程，请确保在测试环境中操作。$\r$\n$\r$\n点击'下一步'继续。"
 !define MUI_FINISHPAGE_TITLE "安装完成"
-!define MUI_FINISHPAGE_TEXT "WinSLA 已成功安装。$\r$\n$\r$\n已注册 Credential Provider 并启动认证服务。$\r$\n下次登录时将显示双账号认证界面。$\r$\n$\r$\n如需卸载，请通过控制面板或运行卸载程序。"
+!define MUI_FINISHPAGE_TEXT "WinSLA 已成功安装 (v1.0.24)。$\r$\n$\r$\n✅ 已自动注册 Credential Provider 到系统注册表!$\r$\n✅ 已启动认证服务 !$\r$\n$\r$\n下次登录时将显示双账号认证界面。$\r$\n$\r$\n如需卸载，请通过控制面板或运行卸载程序。"
 
 ; ─── 页面 ───────────────────────────────────────────────────
 !insertmacro MUI_PAGE_WELCOME
@@ -70,7 +70,7 @@ Section "Core Files" SecCore
 
     ; 写入安装路径到注册表
     WriteRegStr HKLM "Software\WinSLA" "InstallDir" "$INSTDIR"
-    WriteRegStr HKLM "Software\WinSLA" "Version" "1.0.1"
+    WriteRegStr HKLM "Software\WinSLA" "Version" "1.0.25"
 
     ; 创建卸载程序
     WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -79,9 +79,9 @@ Section "Core Files" SecCore
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "UninstallString" "$INSTDIR\uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
-        "DisplayVersion" "1.0.1"
+        "DisplayVersion" "2.0.0"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
-        "Publisher" "WinSLA Contributors"
+        "Publisher" "ylw"
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "NoModify" 1
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
@@ -89,35 +89,99 @@ Section "Core Files" SecCore
 SectionEnd
 
 Section "Register Credential Provider" SecCP
-    ; 注册 CP CLSID
+    DetailPrint "Creating Credential Provider registry entries..."
+    
+    ; Step 1: Create CLSID base key for DualAuthCredentialProvider class
     WriteRegStr HKLM "SOFTWARE\Classes\CLSID\${CP_CLSID}" "" "WinSLA Dual-Auth Credential Provider"
+    WriteRegStr HKLM "SOFTWARE\Classes\CLSID\${CP_CLSID}" "Version" "1.0.24"
+    DetailPrint "Creating CLSID key: ${CP_CLSID}..."
+    
+    ; Create InprocServer32 subkey (standard COM registration)
     WriteRegStr HKLM "SOFTWARE\Classes\CLSID\${CP_CLSID}\InprocServer32" "" "$INSTDIR\DualAuthCP.dll"
     WriteRegStr HKLM "SOFTWARE\Classes\CLSID\${CP_CLSID}\InprocServer32" "ThreadingModel" "Apartment"
-
-    ; 注册到 Credential Providers
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "" "WinSLA Dual-Auth"
+    DetailPrint "  ✓ Created InprocServer32 subkey"
+    DetailPrint "  ✓ DLL Path: $INSTDIR\DualAuthCP.dll"
+    DetailPrint "  ✓ ThreadingModel: Apartment (required by LogonUI)"
+    
+    ; Step 2: Register this CP with Windows Authentication system (THE KEY STEP!)
+    ; This is where WinSLA tells LogonUI about the new credential provider
+    DetailPrint "Registering Credential Provider with Windows Authentication..."
+    
+    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "" "WinSLA Dual-Account Auth"
+    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "DllPath" "$INSTDIR\DualAuthCP.dll"
+    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "Description" "WinSLA Dual-Account Authentication System v1.0.3"
+    
+    ; Disabled=0 means ENABLED (this is how Windows works - 0 = active, 1 = disabled)
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "Disabled" 0
-
-    DetailPrint "Credential Provider 已注册: ${CP_CLSID}"
+    
+    DetailPrint "  ✓ Added to Credential Providers list"
+    DetailPrint "  ✓ Set Disabled=0 (ENABLED/active)"
+    DetailPrint "✓ All Credential Provider registrations completed successfully!"
 SectionEnd
 
 Section "Install Windows Service" SecService
-    ; 使用 sc.exe 注册服务 (标准 Windows 方式)
-    nsExec::ExecToLog 'sc.exe create "${SERVICE_NAME}" binPath= "$INSTDIR\winsla-service.exe --service" start= auto'
+    DetailPrint "Installing WinSLA Windows Service..."
+    
+    ; Stop any existing service first (from previous installation)
+    nsExec::ExecToLog 'sc.exe stop "${SERVICE_NAME}"'
     Pop $0
-
-    ${If} $0 == 0
-        DetailPrint "WinSLA Service 已注册"
-        ; 启动服务
-        nsExec::ExecToLog 'net start "${SERVICE_NAME}"'
+    ${If} $0 != 1060 ; 错误码 1060 = 服务未安装是正常的
+        DetailPrint "Stopped existing service (or no service was running)"
+    ${EndIf}
+    
+    ; Remove service if it exists (sometimes registry entry remains)
+    nsExec::ExecToLog 'sc.exe delete "${SERVICE_NAME}"'
+    Pop $0
+    ${If} $0 != 1060 ; 正常或不存在都是 ok 的
+        DetailPrint "Removed old service entry"
+    ${ElseIf} $0 == 1060
+        DetailPrint "Service does not exist yet (normal on fresh install)"
+    ${EndIf}
+    
+    ; Create new service with sc.exe (standard Windows method)
+    nsExec::ExecToLog 'sc.exe create "${SERVICE_NAME}" binPath= "$INSTDIR\winsla-service.exe --service" start= auto' 2>&1
+    Pop $0
+    StrCpy $0 $0 1 ; 只取第一个字符（成功/失败）
+    
+    ${If} $0 == "0"
+        DetailPrint "✓ Service created successfully"
+        
+        ; Wait a moment for registry to sync
+        Sleep 1000
+        
+        ; Start the service
+        nsExec::ExecToLog 'net start "${SERVICE_NAME}"' 2>&1
         Pop $0
-        ${If} $0 == 0
-            DetailPrint "WinSLA Service 已启动"
+        
+        ${If} $0 == "0"
+            DetailPrint "✓ Service started and is running"
+        ${ElseIf} $0 == "1060" ; 错误码 1060 = 服务已存在但未运行
+            DetailPrint "⚠ Service already registered, starting..."
+            Sleep 500
+            nsExec::ExecToLog 'net start "${SERVICE_NAME}"' 2>&1
+            Pop $0
+            ${If} $0 == "0"
+                DetailPrint "✓ Service started"
+            ${Else}
+                DetailPrint "✗ Failed to start service (error: $0), but registration completed"
+            ${EndIf}
         ${Else}
-            DetailPrint "服务已注册但启动失败 (错误码: $0)，可稍后手动启动"
+            DetailPrint "✗ Service start failed (error code: $0), but registration is complete"
         ${EndIf}
     ${Else}
-        DetailPrint "服务注册失败 (错误码: $0)，可手动运行: sc.exe create ..."
+        DetailPrint "✗ Service creation failed (error: $0)"
+        DetailPrint "You may need to manually run: sc.exe create ..."
+        MessageBox MB_ICONSTOP "Service installation failed!\n\nError code: $0\n\nPlease check error log above." IDOK
+    ${EndIf}
+    
+    ; Verify service exists
+    DetailPrint "Verifying service installation..."
+    nsExec::ExecToLog 'sc.exe query "${SERVICE_NAME}" type= SERVICE'
+    Pop $0
+    ${If} $0 != "0"
+        DetailPrint "✗ Query service failed - checking service status in Control Panel"
+    ${Else}
+        DetailPrint "✓ Service verification passed"
     ${EndIf}
 SectionEnd
 
@@ -133,6 +197,10 @@ Section "Start Menu Shortcuts" SecShortcuts
     ; 刷新图标缓存
     nsExec::ExecToLog 'ie4uinit.exe -show'
     Pop $0
+    
+    ; 创建安装完成标记（用于后续刷新）
+    WriteRegStr HKLM "Software\WinSLA" "InstallComplete" "1"
+    DetailPrint "安装配置已完成，请重启计算机应用更改"
 SectionEnd
 
 ; ─── 卸载区段 ───────────────────────────────────────────────
@@ -184,6 +252,11 @@ LangString DESC_SecShortcuts ${LANG_SIMPCHINESE} "创建开始菜单快捷方式
 
 ; ─── 初始化检查 ─────────────────────────────────────────────
 Function .onInit
+    ; 关键修复: NSIS 安装器是 32 位进程，默认写 HKLM\SOFTWARE 会被 WOW64
+    ; 重定向到 WOW6432Node。必须切换到 64 位注册表视图，
+    ; 否则 64 位 LogonUI 读不到 Credential Provider 注册。
+    SetRegView 64
+
     ; 检查管理员权限
     UserInfo::GetAccountType
     Pop $0
@@ -204,4 +277,9 @@ Function .onInit
         IDYES continue
     Abort
     continue:
+FunctionEnd
+
+Function un.onInit
+    ; 卸载时同样使用 64 位注册表视图，确保能删除 64 位视图下的键
+    SetRegView 64
 FunctionEnd

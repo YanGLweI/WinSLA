@@ -1,0 +1,9 @@
+# WinSLA build configuration
+#
+# Statically link the MSVC C runtime so the Credential Provider DLL does NOT
+# depend on VCRUNTIME140.dll / UCRT forwarders. LogonUI loads the DLL on the
+# secure desktop; on a clean Windows install without the Visual C++
+# Redistributable, a dynamically-linked DLL fails LoadLibrary silently and the
+# credential tile never appears. Static CRT removes that external dependency.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

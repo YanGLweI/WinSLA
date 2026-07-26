@@ -60,8 +60,11 @@ pub extern "system" fn DllGetClassObject(
             return -2147467262i32; // CLASS_E_CLASSNOTAVAILABLE
         }
 
+        provider_com::trace("DllGetClassObject -> creating class factory");
+
         // Create the class factory
         let factory = class_factory::create_class_factory();
+        provider_com::trace(&format!("DllGetClassObject -> factory ptr={:p}", factory));
         if factory.is_null() {
             *ppv = std::ptr::null_mut();
             return -2147467259i32; // E_OUTOFMEMORY
@@ -69,12 +72,16 @@ pub extern "system" fn DllGetClassObject(
 
         // QueryInterface on the factory for the requested IID
         let vtable = *(factory as *const *const c_void);
+        provider_com::trace(&format!("DllGetClassObject -> factory vtable={:p}", vtable));
         let qi_fn = (*(vtable as *const class_factory::ClassFactoryVTable)).query_interface;
+        provider_com::trace("DllGetClassObject -> calling factory QI");
         let hr = qi_fn(factory, riid as *const GUID, ppv);
+        provider_com::trace(&format!("DllGetClassObject -> factory QI hr=0x{:08X}", hr));
 
         // Release our initial reference
         let rel_fn = (*(vtable as *const class_factory::ClassFactoryVTable)).release;
         rel_fn(factory);
+        provider_com::trace("DllGetClassObject -> done");
 
         hr
     }
