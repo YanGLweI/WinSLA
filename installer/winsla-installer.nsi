@@ -26,10 +26,10 @@ VIAddVersionKey "LegalCopyright" "MIT License - 2026 ylw"
 !define MUI_UNICON "..\assets\winsla.ico"
 Icon "..\assets\winsla.ico"
 UninstallIcon "..\assets\winsla.ico"
-!define MUI_WELCOMEPAGE_TITLE "WinSLA 双账号认证系统 安装向导 v1.0.24"
+!define MUI_WELCOMEPAGE_TITLE "WinSLA 双账号认证系统 安装向导"
 !define MUI_WELCOMEPAGE_TEXT "本向导将安装 WinSLA Windows 双账号协同登录代理。$\r$\n$\r$\nWinSLA 实现'金库双人原则'，要求两个独立 AD 域账号同时验证通过方可登录。$\r$\n$\r$\n✅ 新版本特性：NSIS 安装程序现已自动写入注册表！无需手动运行 PowerShell 脚本。$\r$\n$\r$\n⚠️ 警告：安装后会影响系统登录流程，请确保在测试环境中操作。$\r$\n$\r$\n点击'下一步'继续。"
 !define MUI_FINISHPAGE_TITLE "安装完成"
-!define MUI_FINISHPAGE_TEXT "WinSLA 已成功安装 (v1.0.24)。$\r$\n$\r$\n✅ 已自动注册 Credential Provider 到系统注册表!$\r$\n✅ 已启动认证服务 !$\r$\n$\r$\n下次登录时将显示双账号认证界面。$\r$\n$\r$\n如需卸载，请通过控制面板或运行卸载程序。"
+!define MUI_FINISHPAGE_TEXT "WinSLA 已成功安装。$\r$\n$\r$\n✅ 已自动注册 Credential Provider 到系统注册表!$\r$\n✅ 已启动认证服务 !$\r$\n$\r$\n下次登录时将显示双账号认证界面。$\r$\n$\r$\n如需卸载，请通过控制面板或运行卸载程序。"
 
 ; ─── 页面 ───────────────────────────────────────────────────
 !insertmacro MUI_PAGE_WELCOME
