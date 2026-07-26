@@ -32,13 +32,6 @@ WinSLA 是一个 Windows 系统级双账号认证登录代理。在 Active Direc
 - **审计日志**：所有认证事件记录到本地数据库与日志
 - **集中管理**：管理端 GUI 提供仪表盘、配对规则、应急账号、审计日志、策略配置
 
-### v2.0.0 版本说明
-
-v2.0.0 是首个稳定可用版本，彻底解决了早期版本的两个致命问题，并已通过虚拟机域环境实测验证：
-
-1. **LogonUI 登录崩溃**：修正 `CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION` 结构体布局，严格对齐 Windows SDK 26100（32 字节、无 `cbSize` 字段）。
-2. **登录界面静默循环**：修正 `GetSerialization` 响应码 `CPGSR_RETURN_CREDENTIAL_FINISHED` 为正确值 `2`（此前误用 `3`，即"无凭据"，导致 LSA 登录从不触发）。
-
 ---
 
 ## 技术架构
