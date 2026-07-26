@@ -330,12 +330,12 @@ unsafe extern "system" fn provider_get_field_descriptor_at(
 
     // Field definitions: (type, label)
     let (cpft, label): (u32, &str) = match index {
-        0 => (CPFT_EDIT_TEXT, "User A"),
-        1 => (CPFT_PASSWORD_TEXT, "Password A"),
-        2 => (CPFT_EDIT_TEXT, "User B"),
-        3 => (CPFT_PASSWORD_TEXT, "Password B"),
-        4 => (CPFT_SUBMIT_BUTTON, "Verify & Login"),
-        5 => (CPFT_SMALL_TEXT, "Status"),
+        0 => (CPFT_EDIT_TEXT, "用户名 A"),
+        1 => (CPFT_PASSWORD_TEXT, "密码 A"),
+        2 => (CPFT_EDIT_TEXT, "用户名 B"),
+        3 => (CPFT_PASSWORD_TEXT, "密码 B"),
+        4 => (CPFT_SUBMIT_BUTTON, "验证并登录"),
+        5 => (CPFT_SMALL_TEXT, "状态"),
         _ => unreachable!(),
     };
 

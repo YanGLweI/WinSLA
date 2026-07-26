@@ -221,7 +221,7 @@ impl DualAuthCredentialCom {
             user_a_pass: to_wide(""),
             user_b_name: to_wide(""),
             user_b_pass: to_wide(""),
-            status_text: to_wide("Enter credentials for both users"),
+            status_text: to_wide("双控登录"),
             auth_success: false,
             serialized_user: Vec::new(),
             serialized_pass: Vec::new(),

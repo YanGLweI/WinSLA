@@ -41,22 +41,17 @@ pub struct AuditEntry {
     pub error_message: Option<String>,
 }
 
-/// Get the current service status by querying Windows SCM
-pub fn get_service_status() -> Result<ServiceStatus, String> {
+/// Check if the WinSLA service is currently running via Windows SCM
+pub fn is_service_running() -> bool {
     let output = std::process::Command::new("sc.exe")
         .args(["query", "WinSLA Service"])
         .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| format!("Failed to query service: {}", e))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let running = stdout.contains("RUNNING");
-    Ok(ServiceStatus {
-        running,
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        connections_accepted: 0,
-        successful_auths: 0,
-        failed_auths: 0,
-    })
+        .output();
+
+    match output {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).contains("RUNNING"),
+        Err(_) => false,
+    }
 }
 
 /// Start the WinSLA service

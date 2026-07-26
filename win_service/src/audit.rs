@@ -1,8 +1,9 @@
 //! Audit logging module for WinSLA Service
 //!
-//! Records authentication events to Windows Event Log and local file.
+//! Records authentication events to Windows Event Log, local file, and shared SQLite DB.
 
 use chrono::Utc;
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
 /// Audit event types
@@ -101,5 +102,66 @@ impl AuditLogger {
 impl Default for AuditLogger {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ─── SQLite Audit Database ────────────────────────────────────────
+
+/// Shared database path accessible by both service (SYSTEM) and management app
+const SHARED_DB_DIR: &str = r"C:\ProgramData\WinSLA";
+const SHARED_DB_FILE: &str = r"C:\ProgramData\WinSLA\winsla.db";
+
+/// SQLite-backed audit recorder shared with the management application.
+///
+/// Writes authentication results to the same database the management app reads,
+/// enabling real-time audit log and statistics on the dashboard.
+pub struct AuditDb {
+    conn: Connection,
+}
+
+impl AuditDb {
+    /// Open (or create) the shared audit database.
+    /// Enables WAL mode for safe multi-process concurrent access.
+    pub fn open() -> Result<Self, rusqlite::Error> {
+        // Ensure directory exists
+        let _ = std::fs::create_dir_all(SHARED_DB_DIR);
+
+        let conn = Connection::open(SHARED_DB_FILE)?;
+
+        // Enable WAL for concurrent read/write from service + management app
+        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+
+        // Create audit_log table if it doesn't exist (same schema as management app)
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                user_a_sid TEXT NOT NULL,
+                user_b_sid TEXT NOT NULL,
+                result TEXT NOT NULL,
+                error_message TEXT,
+                client_hostname TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);",
+        )?;
+
+        Ok(Self { conn })
+    }
+
+    /// Record an authentication attempt into the shared database.
+    pub fn record_auth(
+        &self,
+        user_a: &str,
+        user_b: &str,
+        result: &str,
+        error_message: Option<&str>,
+        client_hostname: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "INSERT INTO audit_log (user_a_sid, user_b_sid, result, error_message, client_hostname)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![user_a, user_b, result, error_message, client_hostname],
+        )?;
+        Ok(())
     }
 }

@@ -7,6 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::ServerOptions;
 
 use crate::auth;
+use crate::audit::AuditDb;
 use crate::com_types::{AuthRequest, AuthResponse};
 use crate::ServiceState;
 
@@ -142,6 +143,32 @@ async fn process_auth_request(request: AuthRequest, state: &Arc<Mutex<ServiceSta
         } else {
             state_guard.record_failure();
         }
+    }
+
+    // Write audit record to shared SQLite database
+    let result_str: &str;
+    let error_msg: Option<String>;
+    match &response {
+        AuthResponse::Success => { result_str = "success"; error_msg = None; }
+        AuthResponse::FailUserA(msg) => { result_str = "fail_user_a"; error_msg = Some(msg.clone()); }
+        AuthResponse::FailUserB(msg) => { result_str = "fail_user_b"; error_msg = Some(msg.clone()); }
+        AuthResponse::BothFailed(msg_a, msg_b) => { result_str = "fail_both"; error_msg = Some(format!("{}; {}", msg_a, msg_b)); }
+        AuthResponse::NetworkUnavailable => { result_str = "network_unavailable"; error_msg = Some("Network unavailable".to_string()); }
+        AuthResponse::Timeout => { result_str = "timeout"; error_msg = Some("Authentication timeout".to_string()); }
+    }
+
+    if let Ok(audit_db) = AuditDb::open() {
+        if let Err(e) = audit_db.record_auth(
+            &request.user_a_username,
+            &request.user_b_username,
+            result_str,
+            error_msg.as_deref(),
+            None, // client_hostname not available in current protocol
+        ) {
+            log::warn!("Failed to write audit record to DB: {}", e);
+        }
+    } else {
+        log::warn!("Failed to open audit database");
     }
 
     response

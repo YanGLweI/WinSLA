@@ -88,6 +88,9 @@ impl Database {
 
     /// Initialize database schema
     fn initialize_schema(&self) -> SqliteResult<()> {
+        // Enable WAL mode for safe concurrent access from win_service + management app
+        self.conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+
         self.conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS dual_pairs (
@@ -314,6 +317,26 @@ impl Database {
         entries.collect()
     }
 
+    /// Get authentication statistics: (total_connections, successful, failed)
+    pub fn get_auth_stats(&self) -> SqliteResult<(u64, u64, u64)> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COUNT(*),
+                    SUM(CASE WHEN result = 'success' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN result != 'success' THEN 1 ELSE 0 END)
+             FROM audit_log",
+        )?;
+
+        let stats = stmt.query_row([], |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, u64>(1).unwrap_or(0),
+                row.get::<_, u64>(2).unwrap_or(0),
+            ))
+        })?;
+
+        Ok(stats)
+    }
+
     // ========================================================================
     // Policy Configuration
     // ========================================================================
@@ -451,5 +474,26 @@ mod tests {
         let accounts = db.get_emergency_accounts().unwrap();
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].reason, "System maintenance");
+    }
+
+    #[test]
+    fn test_auth_stats() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Empty DB should return zeros
+        let (total, success, failed) = db.get_auth_stats().unwrap();
+        assert_eq!(total, 0);
+        assert_eq!(success, 0);
+        assert_eq!(failed, 0);
+
+        // Add some audit entries
+        db.add_audit_entry("user-a", "user-b", "success", None, None).unwrap();
+        db.add_audit_entry("user-a", "user-b", "success", None, None).unwrap();
+        db.add_audit_entry("user-a", "user-b", "fail_user_a", Some("bad pw"), None).unwrap();
+
+        let (total, success, failed) = db.get_auth_stats().unwrap();
+        assert_eq!(total, 3);
+        assert_eq!(success, 2);
+        assert_eq!(failed, 1);
     }
 }

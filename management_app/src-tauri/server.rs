@@ -49,14 +49,22 @@ pub async fn start_server(db: AppState, port: u16) -> anyhow::Result<()> {
 
 // ─── API Handlers ───────────────────────────────────────────────
 
-async fn get_status() -> Json<commands::ServiceStatus> {
-    Json(commands::get_service_status().unwrap_or(commands::ServiceStatus {
-        running: false,
+async fn get_status(State(db): State<AppState>) -> Json<commands::ServiceStatus> {
+    let running = commands::is_service_running();
+
+    // Get real authentication statistics from the shared database
+    let (connections_accepted, successful_auths, failed_auths) = {
+        let db = db.lock().unwrap();
+        db.get_auth_stats().unwrap_or((0, 0, 0))
+    };
+
+    Json(commands::ServiceStatus {
+        running,
         version: env!("CARGO_PKG_VERSION").to_string(),
-        connections_accepted: 0,
-        successful_auths: 0,
-        failed_auths: 0,
-    }))
+        connections_accepted,
+        successful_auths,
+        failed_auths,
+    })
 }
 
 async fn list_pairs(State(db): State<AppState>) -> impl IntoResponse {

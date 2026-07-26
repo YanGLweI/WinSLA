@@ -14,7 +14,7 @@ mod wincred;
 
 const PORT: u16 = 19830;
 
-/// Get the app data directory (writable location for DB and WebView2 data)
+/// Get the app data directory (writable location for WebView2 data)
 fn app_data_dir() -> std::path::PathBuf {
     let base = std::env::var("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
@@ -24,13 +24,21 @@ fn app_data_dir() -> std::path::PathBuf {
     dir
 }
 
+/// Get the shared database directory (accessible by both service and management app)
+fn shared_db_dir() -> std::path::PathBuf {
+    let dir = std::path::PathBuf::from(r"C:\ProgramData\WinSLA");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
 fn main() {
     env_logger::init();
 
     let data_dir = app_data_dir();
 
-    // Open database in writable location
-    let db_path = data_dir.join("winsla.db");
+    // Open database in shared location (accessible by win_service running as SYSTEM)
+    let db_dir = shared_db_dir();
+    let db_path = db_dir.join("winsla.db");
     let db = database::Database::open(db_path.to_str().unwrap_or("winsla.db"))
         .expect("Failed to open database");
     let state = Arc::new(Mutex::new(db));

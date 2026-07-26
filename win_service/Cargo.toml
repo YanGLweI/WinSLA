@@ -1,6 +1,6 @@
 [package]
 name = "winsla-service"
-version = "2.0.1"
+version = "2.0.3"
 edition = "2021"
 authors = ["ylw"]
 description = "Windows Service for dual-account authentication bridge"
@@ -22,6 +22,9 @@ env_logger.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 sha2.workspace = true
+
+# SQLite audit storage (shared with management app)
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [build-dependencies]
 winres = "0.1"
