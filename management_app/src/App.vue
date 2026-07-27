@@ -32,8 +32,8 @@ const title = computed(() => (route.meta.title as string) || 'WinSLA')
     <footer class="statusbar">
       <span class="status-item">{{ title }}</span>
       <span class="status-sep">|</span>
-      <span class="status-item">管道: \\.\pipe\winsla-auth-pipe</span>
-      <span class="status-right">WinSLA v0.1.0</span>
+      <span class="status-item">WinSLA</span>
+      <span class="status-right">Developed by Yeunglw</span>
     </footer>
   </div>
 </template>
