@@ -15,10 +15,10 @@ export interface ServiceStatus {
 
 export interface DualPair {
   id: string
-  user_a_sid: string
-  user_b_sid: string
-  user_a_name: string
-  user_b_name: string
+  account_sid: string        // 主账号 SID
+  approver_sid: string       // 审批人 SID
+  account_username: string   // 主账号用户名
+  approver_username: string  // 审批人用户名
   enabled: boolean
   created_at: string
   updated_at: string
@@ -37,8 +37,8 @@ export interface EmergencyAccount {
 export interface AuditEntry {
   id: number
   timestamp: string
-  user_a_sid: string
-  user_b_sid: string
+  account_sid: string
+  approver_sid: string
   result: string
   error_message: string | null
   client_hostname: string | null
@@ -84,6 +84,6 @@ export const restartService = () => api.post<ServiceActionResult>('/service/rest
 export const getServiceConfig = () => api.get<ServiceConfig>('/service/config')
 export const setServiceConfig = (data: ServiceConfig) => api.put<ServiceActionResult>('/service/config', data)
 export const validateAccount = (data: { username: string; password: string }) =>
-  api.post<ValidateAccountResult>('/validate-account', data)
+  api.post<ValidateAccountResult>('/validate-account', data, { timeout: 35000 })
 
 export default api

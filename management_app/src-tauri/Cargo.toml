@@ -1,6 +1,6 @@
 [package]
 name = "winsla-management"
-version = "2.0.4"
+version = "2.0.7"
 edition = "2021"
 description = "WinSLA Dual-Account Authentication Management App"
 authors = ["ylw"]

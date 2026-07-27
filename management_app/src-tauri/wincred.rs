@@ -38,13 +38,18 @@ pub fn validate_and_resolve(username: &str, password: &str) -> Result<(String, S
         );
 
         if result.is_err() {
-            let err = result.unwrap_err().code().0 as u32;
+            let hresult = result.unwrap_err().code().0 as u32;
+            // Extract Win32 error code from HRESULT (FACILITY_WIN32 = 7)
+            let err = if (hresult >> 16) & 0x7FF == 7 { hresult & 0xFFFF } else { hresult };
             return Err(match err {
-                1326 => "Logon failure: unknown user name or bad password".to_string(),
-                1331 => "Account is disabled".to_string(),
-                1909 => "Account is locked out".to_string(),
-                1327 => "Account restriction prevents logon".to_string(),
-                _ => format!("Logon failed (error {})", err),
+                1326 => "用户名或密码错误".to_string(),
+                1327 => "账号限制无法登录".to_string(),
+                1328 => "账号登录时间限制".to_string(),
+                1329 => "不允许在此工作站登录".to_string(),
+                1330 => "密码已过期".to_string(),
+                1331 => "账号已被禁用".to_string(),
+                1909 => "账号已被锁定".to_string(),
+                _ => format!("登录失败（错误码 {}）", err),
             });
         }
         let _ = CloseHandle(token);

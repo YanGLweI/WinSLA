@@ -22,10 +22,10 @@ pub struct ServiceStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DualPair {
     pub id: String,
-    pub user_a_sid: String,
-    pub user_b_sid: String,
-    pub user_a_name: String,
-    pub user_b_name: String,
+    pub account_sid: String,           // 主账号 SID
+    pub approver_sid: String,          // 审批人 SID
+    pub account_username: String,      // 主账号用户名
+    pub approver_username: String,     // 审批人用户名
     pub enabled: bool,
     pub created_at: String,
 }
@@ -75,13 +75,13 @@ pub fn get_dual_pairs() -> Result<Vec<DualPair>, String> {
 }
 
 /// Add a new dual-account pair
-pub fn add_dual_pair(user_a_sid: &str, user_b_sid: &str) -> Result<DualPair, String> {
+pub fn add_dual_pair(account_sid: &str, approver_sid: &str) -> Result<DualPair, String> {
     let pair = DualPair {
         id: uuid::Uuid::new_v4().to_string(),
-        user_a_sid: user_a_sid.to_string(),
-        user_b_sid: user_b_sid.to_string(),
-        user_a_name: String::new(),
-        user_b_name: String::new(),
+        account_sid: account_sid.to_string(),
+        approver_sid: approver_sid.to_string(),
+        account_username: String::new(),
+        approver_username: String::new(),
         enabled: true,
         created_at: chrono::Local::now().to_rfc3339(),
     };

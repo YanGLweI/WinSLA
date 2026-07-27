@@ -43,8 +43,8 @@ onMounted(load)
     <div class="table-wrap">
       <el-table :data="entries" v-loading="loading" size="small" border stripe height="100%">
         <el-table-column prop="timestamp" label="时间" width="155" />
-        <el-table-column prop="user_a_sid" label="用户 A" min-width="130" show-overflow-tooltip />
-        <el-table-column prop="user_b_sid" label="用户 B" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="account_sid" label="主账号" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="approver_sid" label="审批人" min-width="130" show-overflow-tooltip />
         <el-table-column label="结果" width="80" align="center">
           <template #default="{ row }">
             <el-tag :type="resultTag(row.result)" size="small" effect="plain">{{ row.result }}</el-tag>

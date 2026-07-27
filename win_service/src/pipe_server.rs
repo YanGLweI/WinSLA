@@ -99,6 +99,43 @@ async fn handle_client(
 
 /// Process authentication request using dual verification
 async fn process_auth_request(request: AuthRequest, state: &Arc<Mutex<ServiceState>>) -> AuthResponse {
+    log::info!(
+        "Processing auth request: {} <-> {}",
+        request.user_a_username,
+        request.user_b_username
+    );
+    
+    // Step 1: Check pairing rules first (strict order validation)
+    match crate::auth::dual_validator::check_pairing_rule(
+        &request.user_a_username,  // Treat user_a as account
+        &request.user_b_username,  // Treat user_b as approver
+    ).await {
+        Ok(()) => {
+            log::info!("Pairing rule validation passed");
+        }
+        Err(auth::AuthError::InvalidCredentials(msg)) => {
+            log::warn!("Pairing rule rejected login: {}", msg);
+            
+            // Record audit log before returning
+            if let Ok(audit_db) = AuditDb::open() {
+                let _ = audit_db.record_auth(
+                    &request.user_a_username,
+                    &request.user_b_username,
+                    "pairing_violation",
+                    Some(&msg),
+                    None,
+                );
+            }
+            
+            return AuthResponse::FailUserA(msg); // Show Chinese error message
+        }
+        Err(e) => {
+            log::error!("Pairing rule check error: {}", e);
+            return AuthResponse::NetworkUnavailable;
+        }
+    }
+    
+    // Step 2: Verify both accounts' credentials
     let result = auth::dual_validator::validate_dual_accounts(
         &request.user_a_username,
         &request.user_a_password_hash,
@@ -158,9 +195,11 @@ async fn process_auth_request(request: AuthRequest, state: &Arc<Mutex<ServiceSta
     }
 
     if let Ok(audit_db) = AuditDb::open() {
+        // 使用用户名作为占位符（因为还没有 SID）
+        // TODO: 在认证成功后使用真实的 SID
         if let Err(e) = audit_db.record_auth(
-            &request.user_a_username,
-            &request.user_b_username,
+            &request.user_a_username,   // placeholder: account_sid
+            &request.user_b_username,   // placeholder: approver_sid
             result_str,
             error_msg.as_deref(),
             None, // client_hostname not available in current protocol

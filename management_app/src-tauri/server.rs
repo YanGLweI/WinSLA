@@ -77,17 +77,17 @@ async fn list_pairs(State(db): State<AppState>) -> impl IntoResponse {
 
 #[derive(Deserialize)]
 struct AddPairRequest {
-    user_a_name: String,
-    user_b_name: String,
+    account_username: String,
+    approver_username: String,
     #[serde(default)]
-    user_a_sid: String,
+    account_sid: String,
     #[serde(default)]
-    user_b_sid: String,
+    approver_sid: String,
 }
 
 async fn add_pair(State(db): State<AppState>, Json(req): Json<AddPairRequest>) -> impl IntoResponse {
     let db = db.lock().unwrap();
-    match db.add_dual_pair(&req.user_a_sid, &req.user_b_sid, &req.user_a_name, &req.user_b_name) {
+    match db.add_dual_pair(&req.account_sid, &req.approver_sid, &req.account_username, &req.approver_username) {
         Ok(pair) => (StatusCode::CREATED, Json(pair)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -288,18 +288,40 @@ struct ValidateAccountResponse {
 }
 
 async fn validate_account(Json(req): Json<ValidateAccountRequest>) -> Json<ValidateAccountResponse> {
-    match crate::wincred::validate_and_resolve(&req.username, &req.password) {
-        Ok((sid, display_name)) => Json(ValidateAccountResponse {
+    let username = req.username.clone();
+    let password = req.password.clone();
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio::task::spawn_blocking(move || {
+            crate::wincred::validate_and_resolve(&username, &password)
+        }),
+    ).await;
+
+    match result {
+        Ok(Ok(Ok((sid, display_name)))) => Json(ValidateAccountResponse {
             success: true,
             sid,
             display_name: display_name.clone(),
             message: format!("验证成功: {}", display_name),
         }),
-        Err(msg) => Json(ValidateAccountResponse {
+        Ok(Ok(Err(msg))) => Json(ValidateAccountResponse {
             success: false,
             sid: String::new(),
             display_name: String::new(),
             message: msg,
+        }),
+        Ok(Err(_)) => Json(ValidateAccountResponse {
+            success: false,
+            sid: String::new(),
+            display_name: String::new(),
+            message: "验证线程异常".to_string(),
+        }),
+        Err(_) => Json(ValidateAccountResponse {
+            success: false,
+            sid: String::new(),
+            display_name: String::new(),
+            message: "验证超时：无法连接域控制器（30秒）".to_string(),
         }),
     }
 }

@@ -136,8 +136,8 @@ impl AuditDb {
             "CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-                user_a_sid TEXT NOT NULL,
-                user_b_sid TEXT NOT NULL,
+                account_sid TEXT NOT NULL,
+                approver_sid TEXT NOT NULL,
                 result TEXT NOT NULL,
                 error_message TEXT,
                 client_hostname TEXT
@@ -145,24 +145,82 @@ impl AuditDb {
             CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);",
         )?;
 
+        // Migration: rename old columns if upgrading from v2.0.4
+        Self::migrate_old_columns(&conn)?;
+
         Ok(Self { conn })
+    }
+
+    /// Migrate tables from old column names (user_a_sid/user_b_sid) to new ones (account_sid/approver_sid)
+    fn migrate_old_columns(conn: &Connection) -> Result<(), rusqlite::Error> {
+        // Check audit_log
+        let audit_has_old: bool = {
+            let mut stmt = conn.prepare("PRAGMA table_info(audit_log)")?;
+            let columns: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(|r| r.ok())
+                .collect();
+            columns.contains(&"user_a_sid".to_string())
+        };
+        if audit_has_old {
+            conn.execute_batch(
+                "ALTER TABLE audit_log RENAME COLUMN user_a_sid TO account_sid;
+                 ALTER TABLE audit_log RENAME COLUMN user_b_sid TO approver_sid;",
+            )?;
+        }
+
+        // Check dual_pairs
+        let pairs_has_old: bool = {
+            let mut stmt = conn.prepare("PRAGMA table_info(dual_pairs)")?;
+            let columns: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(|r| r.ok())
+                .collect();
+            columns.contains(&"user_a_sid".to_string())
+        };
+        if pairs_has_old {
+            conn.execute_batch(
+                "ALTER TABLE dual_pairs RENAME COLUMN user_a_sid TO account_sid;
+                 ALTER TABLE dual_pairs RENAME COLUMN user_b_sid TO approver_sid;
+                 ALTER TABLE dual_pairs RENAME COLUMN user_a_name TO account_username;
+                 ALTER TABLE dual_pairs RENAME COLUMN user_b_name TO approver_username;",
+            )?;
+        }
+
+        Ok(())
     }
 
     /// Record an authentication attempt into the shared database.
     pub fn record_auth(
         &self,
-        user_a: &str,
-        user_b: &str,
+        account_sid: &str,      // 主账号 SID
+        approver_sid: &str,     // 审批人 SID
         result: &str,
         error_message: Option<&str>,
         client_hostname: Option<&str>,
     ) -> Result<(), rusqlite::Error> {
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         self.conn.execute(
-            "INSERT INTO audit_log (timestamp, user_a_sid, user_b_sid, result, error_message, client_hostname)
+            "INSERT INTO audit_log (timestamp, account_sid, approver_sid, result, error_message, client_hostname)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![timestamp, user_a, user_b, result, error_message, client_hostname],
+            params![timestamp, account_sid, approver_sid, result, error_message, client_hostname],
         )?;
         Ok(())
+    }
+
+    /// Get all enabled pairing rules from the shared database
+    pub fn get_enabled_pairs(&self) -> Result<Vec<(String, String, String, String)>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT account_sid, approver_sid, account_username, approver_username FROM dual_pairs WHERE enabled = 1",
+        )?;
+
+        let pairs = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+
+        pairs.collect()
     }
 }

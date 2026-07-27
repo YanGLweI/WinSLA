@@ -14,6 +14,28 @@ mod wincred;
 
 const PORT: u16 = 19830;
 
+/// Show a Windows error message box (visible to user even without console)
+fn show_error(title: &str, message: &str) {
+    use std::os::windows::process::CommandExt;
+    let _ = std::process::Command::new("cmd.exe")
+        .args(["/C", &format!("echo {} & pause", message)])
+        .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
+        .spawn();
+    // Also try MessageBoxW via windows API
+    unsafe {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        let title_wide: Vec<u16> = OsStr::new(title).encode_wide().chain(Some(0)).collect();
+        let msg_wide: Vec<u16> = OsStr::new(message).encode_wide().chain(Some(0)).collect();
+        MessageBoxW(std::ptr::null_mut(), msg_wide.as_ptr(), title_wide.as_ptr(), 0x10); // MB_ICONERROR
+    }
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn MessageBoxW(hwnd: *mut std::ffi::c_void, text: *const u16, caption: *const u16, utype: u32) -> i32;
+}
+
 /// Get the app data directory (writable location for WebView2 data)
 fn app_data_dir() -> std::path::PathBuf {
     let base = std::env::var("LOCALAPPDATA")
@@ -39,8 +61,14 @@ fn main() {
     // Open database in shared location (accessible by win_service running as SYSTEM)
     let db_dir = shared_db_dir();
     let db_path = db_dir.join("winsla.db");
-    let db = database::Database::open(db_path.to_str().unwrap_or("winsla.db"))
-        .expect("Failed to open database");
+    let db = match database::Database::open(db_path.to_str().unwrap_or("winsla.db")) {
+        Ok(db) => db,
+        Err(e) => {
+            let msg = format!("Failed to open database at {}\n\nError: {}\n\nPlease check file permissions and disk space.", db_path.display(), e);
+            show_error("WinSLA Management - Database Error", &msg);
+            std::process::exit(1);
+        }
+    };
     let state = Arc::new(Mutex::new(db));
 
     // Start axum server in a background tokio runtime

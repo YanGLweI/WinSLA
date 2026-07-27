@@ -14,10 +14,10 @@ pub struct Database {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DualPairRecord {
     pub id: String,
-    pub user_a_sid: String,
-    pub user_b_sid: String,
-    pub user_a_name: String,
-    pub user_b_name: String,
+    pub account_sid: String,           // 主账号 SID
+    pub approver_sid: String,          // 审批人 SID
+    pub account_username: String,      // 主账号用户名
+    pub approver_username: String,     // 审批人用户名
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -40,8 +40,8 @@ pub struct EmergencyAccount {
 pub struct AuditLogEntry {
     pub id: i64,
     pub timestamp: String,
-    pub user_a_sid: String,
-    pub user_b_sid: String,
+    pub account_sid: String,           // 主账号 SID
+    pub approver_sid: String,          // 审批人 SID
     pub result: String,
     pub error_message: Option<String>,
     pub client_hostname: Option<String>,
@@ -92,17 +92,17 @@ impl Database {
         self.conn.execute_batch("PRAGMA journal_mode=WAL;")?;
 
         self.conn.execute_batch(
-            "
+           "
             CREATE TABLE IF NOT EXISTS dual_pairs (
                 id TEXT PRIMARY KEY,
-                user_a_sid TEXT NOT NULL,
-                user_b_sid TEXT NOT NULL,
-                user_a_name TEXT NOT NULL DEFAULT '',
-                user_b_name TEXT NOT NULL DEFAULT '',
+                account_sid TEXT NOT NULL,
+                approver_sid TEXT NOT NULL,
+                account_username TEXT NOT NULL DEFAULT '',
+                approver_username TEXT NOT NULL DEFAULT '',
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                UNIQUE(user_a_sid, user_b_sid)
+                UNIQUE(account_sid, approver_sid)
             );
 
             CREATE TABLE IF NOT EXISTS emergency_accounts (
@@ -118,8 +118,8 @@ impl Database {
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-                user_a_sid TEXT NOT NULL,
-                user_b_sid TEXT NOT NULL,
+                account_sid TEXT NOT NULL,
+                approver_sid TEXT NOT NULL,
                 result TEXT NOT NULL,
                 error_message TEXT,
                 client_hostname TEXT
@@ -134,6 +134,53 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_dual_pairs_enabled ON dual_pairs(enabled);
             ",
         )?;
+
+        // Migration: rename old columns if they exist (v2.0.4 -> v2.0.6)
+        self.migrate_old_columns()?;
+
+        Ok(())
+    }
+
+    /// Migrate tables from old column names to new ones (v2.0.4 -> v2.0.6)
+    fn migrate_old_columns(&self) -> SqliteResult<()> {
+        // --- Migrate dual_pairs table ---
+        let dual_pairs_has_old: bool = {
+            let mut stmt = self.conn.prepare("PRAGMA table_info(dual_pairs)")?;
+            let columns: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(|r| r.ok())
+                .collect();
+            columns.contains(&"user_a_sid".to_string())
+        };
+
+        if dual_pairs_has_old {
+            log::info!("Migrating dual_pairs table: user_a_sid -> account_sid, user_b_sid -> approver_sid, user_a_name -> account_username, user_b_name -> approver_username");
+            self.conn.execute_batch(
+                "ALTER TABLE dual_pairs RENAME COLUMN user_a_sid TO account_sid;
+                 ALTER TABLE dual_pairs RENAME COLUMN user_b_sid TO approver_sid;
+                 ALTER TABLE dual_pairs RENAME COLUMN user_a_name TO account_username;
+                 ALTER TABLE dual_pairs RENAME COLUMN user_b_name TO approver_username;",
+            )?;
+            log::info!("dual_pairs migration completed");
+        }
+
+        // --- Migrate audit_log table ---
+        let audit_has_old: bool = {
+            let mut stmt = self.conn.prepare("PRAGMA table_info(audit_log)")?;
+            let columns: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(|r| r.ok())
+                .collect();
+            columns.contains(&"user_a_sid".to_string())
+        };
+
+        if audit_has_old {
+            log::info!("Migrating audit_log table: user_a_sid -> account_sid, user_b_sid -> approver_sid");
+            self.conn.execute_batch(
+                "ALTER TABLE audit_log RENAME COLUMN user_a_sid TO account_sid;
+                 ALTER TABLE audit_log RENAME COLUMN user_b_sid TO approver_sid;",
+            )?;
+            log::info!("audit_log migration completed");
+        }
+
         Ok(())
     }
 
@@ -144,26 +191,26 @@ impl Database {
     /// Add a new dual-account pair
     pub fn add_dual_pair(
         &self,
-        user_a_sid: &str,
-        user_b_sid: &str,
-        user_a_name: &str,
-        user_b_name: &str,
+        account_sid: &str,
+        approver_sid: &str,
+        account_username: &str,
+        approver_username: &str,
     ) -> SqliteResult<DualPairRecord> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         self.conn.execute(
-            "INSERT INTO dual_pairs (id, user_a_sid, user_b_sid, user_a_name, user_b_name, enabled, created_at, updated_at)
+            "INSERT INTO dual_pairs (id, account_sid, approver_sid, account_username, approver_username, enabled, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
-            params![id, user_a_sid, user_b_sid, user_a_name, user_b_name, now],
+            params![id, account_sid, approver_sid, account_username, approver_username, now],
         )?;
 
         Ok(DualPairRecord {
             id,
-            user_a_sid: user_a_sid.to_string(),
-            user_b_sid: user_b_sid.to_string(),
-            user_a_name: user_a_name.to_string(),
-            user_b_name: user_b_name.to_string(),
+            account_sid: account_sid.to_string(),
+            approver_sid: approver_sid.to_string(),
+            account_username: account_username.to_string(),
+            approver_username: approver_username.to_string(),
             enabled: true,
             created_at: now.clone(),
             updated_at: now,
@@ -173,17 +220,17 @@ impl Database {
     /// Get all dual pairs
     pub fn get_all_dual_pairs(&self) -> SqliteResult<Vec<DualPairRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, user_a_sid, user_b_sid, user_a_name, user_b_name, enabled, created_at, updated_at
+            "SELECT id, account_sid, approver_sid, account_username, approver_username, enabled, created_at, updated_at
              FROM dual_pairs ORDER BY created_at DESC",
         )?;
 
         let pairs = stmt.query_map([], |row| {
             Ok(DualPairRecord {
                 id: row.get(0)?,
-                user_a_sid: row.get(1)?,
-                user_b_sid: row.get(2)?,
-                user_a_name: row.get(3)?,
-                user_b_name: row.get(4)?,
+                account_sid: row.get(1)?,
+                approver_sid: row.get(2)?,
+                account_username: row.get(3)?,
+                approver_username: row.get(4)?,
                 enabled: row.get::<_, i32>(5)? != 0,
                 created_at: row.get(6)?,
                 updated_at: row.get(7)?,
@@ -281,17 +328,17 @@ impl Database {
     /// Add an audit log entry
     pub fn add_audit_entry(
         &self,
-        user_a_sid: &str,
-        user_b_sid: &str,
+        account_sid: &str,
+        approver_sid: &str,
         result: &str,
         error_message: Option<&str>,
         client_hostname: Option<&str>,
     ) -> SqliteResult<i64> {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         self.conn.execute(
-            "INSERT INTO audit_log (timestamp, user_a_sid, user_b_sid, result, error_message, client_hostname)
+            "INSERT INTO audit_log (timestamp, account_sid, approver_sid, result, error_message, client_hostname)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![timestamp, user_a_sid, user_b_sid, result, error_message, client_hostname],
+            params![timestamp, account_sid, approver_sid, result, error_message, client_hostname],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -299,7 +346,7 @@ impl Database {
     /// Get recent audit log entries
     pub fn get_audit_log(&self, limit: u32) -> SqliteResult<Vec<AuditLogEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, timestamp, user_a_sid, user_b_sid, result, error_message, client_hostname
+            "SELECT id, timestamp, account_sid, approver_sid, result, error_message, client_hostname
              FROM audit_log ORDER BY timestamp DESC LIMIT ?1",
         )?;
 
@@ -307,8 +354,8 @@ impl Database {
             Ok(AuditLogEntry {
                 id: row.get(0)?,
                 timestamp: row.get(1)?,
-                user_a_sid: row.get(2)?,
-                user_b_sid: row.get(3)?,
+                account_sid: row.get(2)?,
+                approver_sid: row.get(3)?,
                 result: row.get(4)?,
                 error_message: row.get(5)?,
                 client_hostname: row.get(6)?,
@@ -403,15 +450,15 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         let pair = db
-            .add_dual_pair("S-1-5-21-user-a", "S-1-5-21-user-b", "Alice", "Bob")
+            .add_dual_pair("S-1-5-21-account", "S-1-5-21-approver", "Alice", "Bob")
             .unwrap();
-        assert_eq!(pair.user_a_name, "Alice");
-        assert_eq!(pair.user_b_name, "Bob");
+        assert_eq!(pair.account_username, "Alice");
+        assert_eq!(pair.approver_username, "Bob");
         assert!(pair.enabled);
 
         let pairs = db.get_all_dual_pairs().unwrap();
         assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].user_a_sid, "S-1-5-21-user-a");
+        assert_eq!(pairs[0].account_sid, "S-1-5-21-account");
     }
 
     #[test]
@@ -419,7 +466,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
 
         let pair = db
-            .add_dual_pair("S-1-5-21-a", "S-1-5-21-b", "A", "B")
+            .add_dual_pair("S-1-5-21-account", "S-1-5-21-approver", "A", "B")
             .unwrap();
 
         assert!(db.remove_dual_pair(&pair.id).unwrap());

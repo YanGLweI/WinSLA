@@ -82,7 +82,7 @@ impl DualAuthCredential {
             user_b_username: String::new(),
             user_b_password: String::new(),
             state: CredentialState::Empty,
-            status_message: "Enter both user credentials".to_string(),
+            status_message: "请输入主账号和审批人的凭据以完成双因素认证".to_string(),
         }
     }
 
@@ -172,7 +172,8 @@ impl DualAuthCredential {
     /// Mark as failed with reason
     pub fn mark_failed(&mut self, reason: &str) {
         self.state = CredentialState::Failed(reason.to_string());
-        self.status_message = format!("Authentication failed: {}", reason);
+        // Display Chinese error message
+        self.status_message = format!("身份验证失败：{}", reason);
     }
 }
 

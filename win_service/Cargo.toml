@@ -1,6 +1,6 @@
 [package]
 name = "winsla-service"
-version = "2.0.3"
+version = "2.0.7"
 edition = "2021"
 authors = ["ylw"]
 description = "Windows Service for dual-account authentication bridge"

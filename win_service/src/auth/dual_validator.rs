@@ -2,7 +2,8 @@
 
 use tokio::join;
 use crate::auth::{AuthError, AuthResult};
-use log::{debug, error, info};
+use crate::audit::AuditDb;
+use log::{debug, error, info, warn};
 
 /// Validate two accounts' credentials concurrently
 pub async fn validate_dual_accounts(
@@ -38,6 +39,63 @@ pub async fn validate_dual_accounts(
             Err(AuthError::BothFailed(ea.to_string(), eb.to_string()))
         }
     }
+}
+
+/// Extract bare username from various formats: "HOT\ylw" / "ylw@hot.local" / "ylw" → "ylw"
+fn extract_bare_username(input: &str) -> String {
+    if let Some(pos) = input.find('\\') {
+        input[pos + 1..].to_lowercase()
+    } else if let Some(pos) = input.find('@') {
+        input[..pos].to_lowercase()
+    } else {
+        input.to_lowercase()
+    }
+}
+
+/// Check pairing rules (strict order validation)
+pub async fn check_pairing_rule(account_username: &str, approver_username: &str) -> Result<(), AuthError> {
+    warn!("Checking pairing rules: account={}, approver={}", account_username, approver_username);
+    
+    // Read all enabled pairing rules from shared database
+    let audit_db = match AuditDb::open() {
+        Ok(db) => db,
+        Err(e) => {
+            warn!("Failed to open audit database: {}. Allowing login anyway.", e);
+            return Ok(());
+        }
+    };
+    
+    let pairs = match audit_db.get_enabled_pairs() {
+        Ok(pairs) => pairs,
+        Err(e) => {
+            warn!("Failed to read pairing rules: {}. Allowing login anyway.", e);
+            return Ok(());
+        }
+    };
+    
+    // If no pairing rules are configured, allow any domain accounts to login
+    if pairs.is_empty() {
+        info!("No pairing rules configured, allowing any domain accounts");
+        return Ok(());
+    }
+    
+    // Normalize input usernames (strip domain, lowercase)
+    let account_bare = extract_bare_username(account_username);
+    let approver_bare = extract_bare_username(approver_username);
+    
+    // Check if current username combination is in valid pairs (strict order: account + approver)
+    for (_account_sid, _approver_sid, pair_account_name, pair_approver_name) in &pairs {
+        if extract_bare_username(pair_account_name) == account_bare
+            && extract_bare_username(pair_approver_name) == approver_bare {
+            info!("Pairing rule matched: {} (account) + {} (approver)", pair_account_name, pair_approver_name);
+            return Ok(());
+        }
+    }
+    
+    // Pair not found - reject with Chinese error message
+    let msg = "主账号与审批人不匹配：该组合不在有效配对列表中".to_string();
+    warn!("Pairing rule rejected: {} + {} not in valid pairs", account_username, approver_username);
+    Err(AuthError::InvalidCredentials(msg))
 }
 
 /// Verify a single account's credentials using LDAP

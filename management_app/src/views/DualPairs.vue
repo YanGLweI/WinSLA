@@ -1,20 +1,24 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getPairs, addPair, deletePair, validateAccount, type DualPair } from '../api'
+import { getPairs, addPair, deletePair, validateAccount as validateAccountApi, type DualPair } from '../api'
 
 const pairs = ref<DualPair[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 
 const form = ref({
-  user_a_name: '', user_a_pass: '', user_a_sid: '',
-  user_b_name: '', user_b_pass: '', user_b_sid: '',
+  account_username: '', 
+  account_password: '', 
+  account_sid: '',
+  approver_username: '', 
+  approver_password: '', 
+  approver_sid: '',
 })
-const validatingA = ref(false)
-const validatingB = ref(false)
-const validatedA = ref(false)
-const validatedB = ref(false)
+const validatingAccount = ref(false)
+const validatingApprover = ref(false)
+const validatedAccount = ref(false)
+const validatedApprover = ref(false)
 
 async function load() {
   loading.value = true
@@ -25,80 +29,87 @@ async function load() {
   loading.value = false
 }
 
-async function validateA() {
-  if (!form.value.user_a_name || !form.value.user_a_pass) {
-    ElMessage.warning('请填写用户 A 的用户名和密码')
+async function handleValidateAccount() {
+  if (!form.value.account_username || !form.value.account_password) {
+    ElMessage.warning('请填写主账号的用户名和密码')
     return
   }
-  validatingA.value = true
-  validatedA.value = false
+  validatingAccount.value = true
+  validatedAccount.value = false
   try {
-    const { data } = await validateAccount({ username: form.value.user_a_name, password: form.value.user_a_pass })
+    const { data } = await validateAccountApi({ username: form.value.account_username, password: form.value.account_password })
     if (data.success) {
-      form.value.user_a_sid = data.sid
-      form.value.user_a_name = data.display_name
-      validatedA.value = true
+      form.value.account_sid = data.sid
+      form.value.account_username = data.display_name
+      validatedAccount.value = true
       ElMessage.success(data.message)
     } else {
       ElMessage.error(data.message)
     }
-  } catch (e: any) { ElMessage.error('验证失败: ' + e.message) }
-  validatingA.value = false
+  } catch (e: any) { ElMessage.error('验证失败：' + e.message) }
+  validatingAccount.value = false
 }
 
-async function validateB() {
-  if (!form.value.user_b_name || !form.value.user_b_pass) {
-    ElMessage.warning('请填写用户 B 的用户名和密码')
+async function handleValidateApprover() {
+  if (!form.value.approver_username || !form.value.approver_password) {
+    ElMessage.warning('请填写审批人的用户名和密码')
     return
   }
-  validatingB.value = true
-  validatedB.value = false
+  validatingApprover.value = true
+  validatedApprover.value = false
   try {
-    const { data } = await validateAccount({ username: form.value.user_b_name, password: form.value.user_b_pass })
+    const { data } = await validateAccountApi({ username: form.value.approver_username, password: form.value.approver_password })
     if (data.success) {
-      form.value.user_b_sid = data.sid
-      form.value.user_b_name = data.display_name
-      validatedB.value = true
+      form.value.approver_sid = data.sid
+      form.value.approver_username = data.display_name
+      validatedApprover.value = true
       ElMessage.success(data.message)
     } else {
       ElMessage.error(data.message)
     }
-  } catch (e: any) { ElMessage.error('验证失败: ' + e.message) }
-  validatingB.value = false
+  } catch (e: any) { ElMessage.error('验证失败：' + e.message) }
+  validatingApprover.value = false
 }
 
 async function handleAdd() {
-  if (!validatedA.value || !validatedB.value) {
+  if (!validatedAccount.value || !validatedApprover.value) {
     ElMessage.warning('请先验证两个账号')
     return
   }
   try {
     await addPair({
-      user_a_name: form.value.user_a_name,
-      user_b_name: form.value.user_b_name,
-      user_a_sid: form.value.user_a_sid,
-      user_b_sid: form.value.user_b_sid,
+      account_sid: form.value.account_sid,
+      approver_sid: form.value.approver_sid,
+      account_username: form.value.account_username,
+      approver_username: form.value.approver_username,
     })
-    ElMessage.success('配对添加成功')
+    ElMessage.success('主账号与审批人关联已建立')
     dialogVisible.value = false
     resetForm()
     load()
-  } catch (e: any) { ElMessage.error('添加失败: ' + e.message) }
+  } catch (e: any) { ElMessage.error('添加失败：' + e.message) }
 }
 
 function resetForm() {
-  form.value = { user_a_name: '', user_a_pass: '', user_a_sid: '', user_b_name: '', user_b_pass: '', user_b_sid: '' }
-  validatedA.value = false
-  validatedB.value = false
+  form.value = { 
+    account_username: '', 
+    account_password: '', 
+    account_sid: '',
+    approver_username: '', 
+    approver_password: '', 
+    approver_sid: '' 
+  }
+  validatedAccount.value = false
+  validatedApprover.value = false
 }
 
 async function handleDelete(row: DualPair) {
-  await ElMessageBox.confirm(`确定删除配对 "${row.user_a_name} <-> ${row.user_b_name}"？`, '确认删除', { type: 'warning' })
+  await ElMessageBox.confirm(`确定删除主账号 "${row.account_username}" 与审批人 "${row.approver_username}" 的关联关系？`, '确认删除', { type: 'warning' })
   try {
     await deletePair(row.id)
     ElMessage.success('已删除')
     load()
-  } catch (e: any) { ElMessage.error('删除失败: ' + e.message) }
+  } catch (e: any) { ElMessage.error('删除失败：' + e.message) }
 }
 
 onMounted(load)
@@ -107,20 +118,20 @@ onMounted(load)
 <template>
   <div class="page">
     <div class="page-toolbar">
-      <span class="page-title">双账号配对规则</span>
-      <span class="page-count">{{ pairs.length }} 条</span>
+      <span class="page-title">主账号与审批人配置</span>
+      <span class="page-count">{{ pairs.length }}条</span>
       <div class="toolbar-actions">
         <el-button size="small" @click="load">刷新</el-button>
-        <el-button size="small" type="primary" @click="dialogVisible = true">+ 新增配对</el-button>
+        <el-button size="small" type="primary" @click="dialogVisible = true">+ 新增主账号与审批人</el-button>
       </div>
     </div>
-
+  
     <div class="table-wrap">
       <el-table :data="pairs" v-loading="loading" size="small" border stripe height="100%">
-        <el-table-column prop="user_a_name" label="用户 A" min-width="120" />
-        <el-table-column prop="user_b_name" label="用户 B" min-width="120" />
-        <el-table-column prop="user_a_sid" label="SID A" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="user_b_sid" label="SID B" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="account_username" label="主账号" min-width="120" />
+        <el-table-column prop="approver_username" label="审批人" min-width="120" />
+        <el-table-column prop="account_sid" label="主账号 SID" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="approver_sid" label="审批人 SID" min-width="160" show-overflow-tooltip />
         <el-table-column label="状态" width="64" align="center">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">
@@ -136,36 +147,87 @@ onMounted(load)
         </el-table-column>
       </el-table>
     </div>
-
-    <el-dialog v-model="dialogVisible" title="新增配对规则" width="460px" :close-on-click-modal="false" @closed="resetForm">
-      <el-form label-width="70px" size="small">
-        <el-divider content-position="left">用户 A</el-divider>
+  
+    <el-dialog v-model="dialogVisible" title="新增主账号与审批人" width="460px" :close-on-click-modal="false" @closed="resetForm">
+      <el-form label-width="80px" size="small">
+        <el-divider content-position="left">主账号（实际登录者）</el-divider>
         <el-form-item label="用户名">
-          <el-input v-model="form.user_a_name" placeholder="DOMAIN\alice 或 alice@domain.com" :disabled="validatedA" />
+          <el-input 
+            v-model="form.account_username" 
+            placeholder="alice 或 DOMAIN\alice 或 alice@domain.com" 
+            :disabled="validatedAccount"
+            @keydown.enter="handleValidateAccount"
+          />
         </el-form-item>
         <el-form-item label="密码">
-          <el-input v-model="form.user_a_pass" type="password" show-password placeholder="域账号密码" :disabled="validatedA" />
+          <el-input 
+            v-model="form.account_password" 
+            type="password" 
+            show-password 
+            placeholder="域账号密码" 
+            :disabled="validatedAccount"
+            @keydown.enter="handleValidateAccount"
+          />
         </el-form-item>
         <el-form-item>
-          <el-button v-if="!validatedA" type="primary" size="small" :loading="validatingA" @click="validateA">验证账号 A</el-button>
-          <el-tag v-else type="success" size="small">已验证: {{ form.user_a_sid }}</el-tag>
+          <el-button 
+            v-if="!validatedAccount" 
+            type="primary" 
+            size="small" 
+            :loading="validatingAccount" 
+            @click="handleValidateAccount"
+          >
+            验证主账号
+          </el-button>
+          <el-tag v-else type="success" size="small">
+            已验证：{{ form.account_sid }}
+          </el-tag>
         </el-form-item>
-
-        <el-divider content-position="left">用户 B</el-divider>
+  
+        <el-divider content-position="left">审批人（审核批准者）</el-divider>
         <el-form-item label="用户名">
-          <el-input v-model="form.user_b_name" placeholder="DOMAIN\bob 或 bob@domain.com" :disabled="validatedB" />
+          <el-input 
+            v-model="form.approver_username" 
+            placeholder="bob 或 DOMAIN\bob 或 bob@domain.com" 
+            :disabled="validatedApprover"
+            @keydown.enter="handleValidateApprover"
+          />
         </el-form-item>
         <el-form-item label="密码">
-          <el-input v-model="form.user_b_pass" type="password" show-password placeholder="域账号密码" :disabled="validatedB" />
+          <el-input 
+            v-model="form.approver_password" 
+            type="password" 
+            show-password 
+            placeholder="域账号密码" 
+            :disabled="validatedApprover"
+            @keydown.enter="handleValidateApprover"
+          />
         </el-form-item>
         <el-form-item>
-          <el-button v-if="!validatedB" type="primary" size="small" :loading="validatingB" @click="validateB">验证账号 B</el-button>
-          <el-tag v-else type="success" size="small">已验证: {{ form.user_b_sid }}</el-tag>
+          <el-button 
+            v-if="!validatedApprover" 
+            type="primary" 
+            size="small" 
+            :loading="validatingApprover" 
+            @click="handleValidateApprover"
+          >
+            验证审批人
+          </el-button>
+          <el-tag v-else type="success" size="small">
+            已验证：{{ form.approver_sid }}
+          </el-tag>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button size="small" @click="dialogVisible = false">取消</el-button>
-        <el-button size="small" type="primary" :disabled="!validatedA || !validatedB" @click="handleAdd">确认添加</el-button>
+        <el-button 
+          size="small" 
+          type="primary" 
+          :disabled="!validatedAccount || !validatedApprover" 
+          @click="handleAdd"
+        >
+          确认添加
+        </el-button>
       </template>
     </el-dialog>
   </div>
