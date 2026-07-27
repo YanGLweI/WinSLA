@@ -83,7 +83,7 @@ pub fn add_dual_pair(user_a_sid: &str, user_b_sid: &str) -> Result<DualPair, Str
         user_a_name: String::new(),
         user_b_name: String::new(),
         enabled: true,
-        created_at: chrono::Utc::now().to_rfc3339(),
+        created_at: chrono::Local::now().to_rfc3339(),
     };
     // In production: insert into SQLite database
     Ok(pair)

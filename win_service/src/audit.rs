@@ -2,7 +2,7 @@
 //!
 //! Records authentication events to Windows Event Log, local file, and shared SQLite DB.
 
-use chrono::Utc;
+use chrono::Local;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
@@ -49,7 +49,7 @@ impl AuditLogger {
 
     /// Log an audit event
     pub fn log_event(&self, event: &AuditEvent) {
-        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let message = match event {
             AuditEvent::AuthSuccess { user_a, user_b, .. } => {
                 format!("[{}] AUTH_SUCCESS: user_a={}, user_b={}", timestamp, user_a, user_b)
@@ -157,10 +157,11 @@ impl AuditDb {
         error_message: Option<&str>,
         client_hostname: Option<&str>,
     ) -> Result<(), rusqlite::Error> {
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         self.conn.execute(
-            "INSERT INTO audit_log (user_a_sid, user_b_sid, result, error_message, client_hostname)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![user_a, user_b, result, error_message, client_hostname],
+            "INSERT INTO audit_log (timestamp, user_a_sid, user_b_sid, result, error_message, client_hostname)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![timestamp, user_a, user_b, result, error_message, client_hostname],
         )?;
         Ok(())
     }

@@ -150,7 +150,7 @@ impl Database {
         user_b_name: &str,
     ) -> SqliteResult<DualPairRecord> {
         let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         self.conn.execute(
             "INSERT INTO dual_pairs (id, user_a_sid, user_b_sid, user_a_name, user_b_name, enabled, created_at, updated_at)
@@ -224,7 +224,7 @@ impl Database {
         approved_by: &str,
     ) -> SqliteResult<EmergencyAccount> {
         let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         self.conn.execute(
             "INSERT INTO emergency_accounts (id, sid, username, reason, approved_by, activated_at)
@@ -287,10 +287,11 @@ impl Database {
         error_message: Option<&str>,
         client_hostname: Option<&str>,
     ) -> SqliteResult<i64> {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         self.conn.execute(
-            "INSERT INTO audit_log (user_a_sid, user_b_sid, result, error_message, client_hostname)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![user_a_sid, user_b_sid, result, error_message, client_hostname],
+            "INSERT INTO audit_log (timestamp, user_a_sid, user_b_sid, result, error_message, client_hostname)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![timestamp, user_a_sid, user_b_sid, result, error_message, client_hostname],
         )?;
         Ok(self.conn.last_insert_rowid())
     }

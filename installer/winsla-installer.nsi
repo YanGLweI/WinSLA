@@ -1,5 +1,5 @@
 ﻿; WinSLA - Windows Dual-Account Authentication System
-; NSIS Installer Script v1.0.4
+; NSIS Installer Script v2.0.4
 ; Fixed: COM multi-interface vtable (SetUserArray) so the dual-auth tile shows
 
 !include "MUI2.nsh"
@@ -7,17 +7,17 @@
 !include "x64.nsh"
 
 ; ─── 基本信息 ───────────────────────────────────────────────
-Name "WinSLA v2.0.3"
-OutFile "WinSLA-v2.0.3-Setup.exe"
+Name "WinSLA v2.0.4"
+OutFile "WinSLA-v2.0.4-Setup.exe"
 InstallDir "$PROGRAMFILES64\WinSLA"
 InstallDirRegKey HKLM "Software\WinSLA" "InstallDir"
 RequestExecutionLevel admin
 Unicode true
 
 ; ─── 版本信息 ───────────────────────────────────────────────
-VIProductVersion "2.0.3.0"
+VIProductVersion "2.0.4.0"
 VIAddVersionKey "ProductName" "WinSLA"
-VIAddVersionKey "FileVersion" "2.0.3"
+VIAddVersionKey "FileVersion" "2.0.4"
 VIAddVersionKey "FileDescription" "WinSLA - Windows Dual-Account Authentication System"
 VIAddVersionKey "LegalCopyright" "MIT License - 2026 ylw"
 
@@ -27,9 +27,9 @@ VIAddVersionKey "LegalCopyright" "MIT License - 2026 ylw"
 Icon "..\assets\winsla.ico"
 UninstallIcon "..\assets\winsla.ico"
 !define MUI_WELCOMEPAGE_TITLE "WinSLA 双账号认证系统 安装向导"
-!define MUI_WELCOMEPAGE_TEXT "本向导将安装 WinSLA Windows 双账号协同登录代理。$\r$\n$\r$\nWinSLA 实现'金库双人原则'，要求两个独立 AD 域账号同时验证通过方可登录。$\r$\n$\r$\n✅ 新版本特性：NSIS 安装程序现已自动写入注册表！无需手动运行 PowerShell 脚本。$\r$\n$\r$\n⚠️ 警告：安装后会影响系统登录流程，请确保在测试环境中操作。$\r$\n$\r$\n点击'下一步'继续。"
+!define MUI_WELCOMEPAGE_TEXT "本向导将安装 WinSLA Windows 双账号协同登录代理。$\r$\n$\r$\nWinSLA 实现'金库双人原则'，要求两个独立 AD 域账号同时验证通过方可登录。$\r$\n$\r$\n✅ 新版本特性：时间戳已修复为本地时间！数据库记录的时间现在与您的系统时间一致。$\r$\n$\r$\n⚠️ 警告：安装后会影响系统登录流程，请确保在测试环境中操作。$\r$\n$\r$\n点击'下一步'继续。"
 !define MUI_FINISHPAGE_TITLE "安装完成"
-!define MUI_FINISHPAGE_TEXT "WinSLA 已成功安装。$\r$\n$\r$\n✅ 已自动注册 Credential Provider 到系统注册表!$\r$\n✅ 已启动认证服务 !$\r$\n$\r$\n下次登录时将显示双账号认证界面。$\r$\n$\r$\n如需卸载，请通过控制面板或运行卸载程序。"
+!define MUI_FINISHPAGE_TEXT "WinSLA 已成功安装。$\r$\n$\r$\n✅ 已自动注册 Credential Provider 到系统注册表!$\r$\n✅ 已启动认证服务 !$\r$\n✅ 时间戳已修复为本地时间，不再有时区问题！$\r$\n$\r$\n下次登录时将显示双账号认证界面。$\r$\n$\r$\n如需卸载，请通过控制面板或运行卸载程序。"
 
 ; ─── 页面 ───────────────────────────────────────────────────
 !insertmacro MUI_PAGE_WELCOME
@@ -70,7 +70,7 @@ Section "Core Files" SecCore
 
     ; 写入安装路径到注册表
     WriteRegStr HKLM "Software\WinSLA" "InstallDir" "$INSTDIR"
-    WriteRegStr HKLM "Software\WinSLA" "Version" "2.0.2"
+    WriteRegStr HKLM "Software\WinSLA" "Version" "2.0.4"
 
     ; 创建卸载程序
     WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -79,7 +79,7 @@ Section "Core Files" SecCore
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "UninstallString" "$INSTDIR\uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
-        "DisplayVersion" "2.0.2"
+        "DisplayVersion" "2.0.4"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "Publisher" "ylw"
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
@@ -109,7 +109,7 @@ Section "Register Credential Provider" SecCP
     
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "" "WinSLA Dual-Account Auth"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "DllPath" "$INSTDIR\DualAuthCP.dll"
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "Description" "WinSLA Dual-Account Authentication System v1.0.3"
+    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "Description" "WinSLA Dual-Account Authentication System v2.0.4"
     
     ; Disabled=0 means ENABLED (this is how Windows works - 0 = active, 1 = disabled)
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "Disabled" 0
