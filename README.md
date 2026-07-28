@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/language-Rust-orange" alt="Language" />
-  <img src="https://img.shields.io/badge/version-2.0.0-yellow" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.0.9-yellow" alt="Version" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
 </p>
 
@@ -25,9 +25,11 @@ WinSLA 是一个 Windows 系统级双账号认证登录代理。在 Active Direc
 ### 核心特性
 
 - **双人双控**：两个不同用户分别输入各自 AD 域密码，两者均验证成功才允许登录
-- **域控集成**：通过 LDAP Simple Bind 与 Active Directory 域控制器通信验证
+- **真实验证**：通过 Windows `LogonUserW` API 进行真实密码验证（支持域账号/本地账号）
 - **原生登录界面**：基于 Windows Credential Provider，在 LogonUI 安全桌面层提供原生双输入 Tile
-- **服务桥接**：Windows Service 后台处理 AD 验证，CP 与服务通过 Named Pipe 安全通信
+- **双 Tile 设计**：登录界面同时显示「双控登录」和「应急登录」两个 Tile
+- **服务桥接**：Windows Service 后台处理验证，CP 与服务通过 Named Pipe 安全通信
+- **失败锁定**：可配置的失败次数阈值与锁定时长，防止暴力破解
 - **应急覆盖**：支持授权管理员在紧急情况下单人登录（需填写原因并记录审计）
 - **审计日志**：所有认证事件记录到本地数据库与日志
 - **集中管理**：管理端 GUI 提供仪表盘、配对规则、应急账号、审计日志、策略配置
@@ -52,17 +54,18 @@ WinSLA 是一个 Windows 系统级双账号认证登录代理。在 Active Direc
 │              winsla-service.exe (Windows Service)                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
 │  │ Pipe Server  │  │Dual Validator│  │  Emergency Override  │  │
-│  │ (tokio async)│→ │(并行验证)     │  │  应急覆盖             │  │
+│  │ (tokio async)│→ │(LogonUserW)  │  │  应急覆盖             │  │
 │  └──────────────┘  └──────┬───────┘  └──────────────────────┘  │
 │                    ┌──────┴───────┐                              │
 │                    │  AD Bridge   │                              │
 │                    │ (LDAP Bind)  │                              │
 │                    └──────┬───────┘                              │
 └───────────────────────────┼──────────────────────────────────────┘
-                            │ LDAP (389/636)
+                            │ LDAP (389/636) / LogonUserW
                             ▼
               ┌──────────────────────────┐
               │   Active Directory DC    │
+              │   / 本地 SAM 数据库       │
               └──────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -79,11 +82,12 @@ WinSLA 是一个 Windows 系统级双账号认证登录代理。在 Active Direc
 | 组件 | 技术 | 说明 |
 |------|------|------|
 | Credential Provider | Rust + windows-rs 0.58 | COM DLL（`DualAuthCP.dll`），静态链接 CRT，加载到 LogonUI 安全桌面 |
-| Windows Service | Rust + tokio + windows-service | 异步 Named Pipe 服务端 + 双账号并行验证 |
-| AD 认证桥接 | Rust（`ad_bridge`） | LDAP Simple Bind 验证 |
+| Windows Service | Rust + tokio + windows-service | 异步 Named Pipe 服务端 + LogonUserW 真实验证 |
+| AD 认证桥接 | Rust（`ad_bridge`） | LDAP Simple Bind 验证（备用） |
 | 管理端后端 | Rust + axum + rusqlite + rust-embed | 内嵌 Web 服务 + SQLite 策略存储 |
 | 管理端界面 | wry + tao（WebView2）+ Vue 3.5 + Element Plus + Vite | 原生桌面窗口承载 Vue 前端 |
 | 安装部署 | NSIS + PowerShell 脚本 | CP 注册 + 服务安装 + 注册表配置 |
+| 安全加固 | zeroize | 敏感字段内存零化 |
 
 ---
 
@@ -128,7 +132,7 @@ cargo build --release
 
 #### 方式一：NSIS 安装程序（推荐）
 
-从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.0.0-Setup.exe`，以管理员身份运行。安装程序自动完成：
+从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.0.9-Setup.exe`，以管理员身份运行。安装程序自动完成：
 
 - 复制 DLL/EXE 到 `C:\Program Files\WinSLA`
 - 注册 Credential Provider CLSID 到 64 位注册表视图
@@ -154,9 +158,10 @@ cargo build --release
 ### 双账号登录
 
 1. 安装并重启后，`Win+L` 锁屏或注销。
-2. 登录界面出现 WinSLA 双账号 Tile。
-3. 分别输入用户 A / 用户 B 的账号与密码，点击提交。
-4. 两个账号均通过 AD 验证后进入桌面；任一失败则显示对应错误。
+2. 登录界面出现 WinSLA 双账号 Tile（双控登录）。
+3. 分别输入主账号 / 审批人的账号与密码，点击提交。
+4. 两个账号均通过验证后进入桌面；任一失败则显示对应错误。
+5. 连续失败达到阈值（默认3次）后账号锁定，需等待锁定时长（默认10分钟）后重试。
 
 ### 服务管理
 
@@ -187,7 +192,14 @@ net stop "WinSLA Service"
 
 ### 应急覆盖
 
-当双账号验证不可用时（如一人不在场），授权管理员可触发应急覆盖：选择应急登录 → 输入授权管理员凭据 → 填写应急原因（必填）→ 验证通过后允许单人登录，同时记录审计事件。
+当双账号验证不可用时（如一人不在场），授权管理员可触发应急覆盖：
+
+1. 在登录界面选择「应急登录」Tile
+2. 输入授权管理员凭据
+3. 填写应急原因（必填）
+4. 验证通过后允许单人登录，同时记录审计事件（`emergency_override`）
+
+应急账号需在管理端「应急账号」模块中预先配置。
 
 ---
 
@@ -206,27 +218,27 @@ WinSLA/
 │   ├── build.rs                  # linker 配置
 │   └── src/
 │       ├── lib.rs                # DllMain + COM 导出
-│       ├── provider_com.rs       # ICredentialProvider 多接口实现
+│       ├── provider_com.rs       # ICredentialProvider 多接口实现（双 Tile）
 │       ├── credential_com.rs     # ICredentialProviderCredential + 序列化
 │       ├── dual_auth_credential.rs  # 双账号凭据状态管理
 │       ├── class_factory.rs      # COM 类工厂
 │       ├── pipe_client.rs        # Named Pipe 客户端
 │       ├── ui_controls.rs        # UI 字段辅助
-│       └── com_types.rs          # COM/通信类型
+│       └── com_types.rs          # COM/通信类型（AuthMode: Dual/Emergency）
 │
 ├── win_service/                  # Windows Service
 │   ├── Cargo.toml
 │   └── src/
 │       ├── main.rs               # 服务入口
 │       ├── service.rs            # 服务注册/安装
-│       ├── pipe_server.rs        # tokio Named Pipe 服务端
-│       ├── audit.rs              # 审计日志
-│       ├── com_types.rs          # 通信协议类型
+│       ├── pipe_server.rs        # tokio Named Pipe 服务端（策略路由）
+│       ├── audit.rs              # 审计日志 + login_attempts 锁定表
+│       ├── com_types.rs          # 通信协议类型（明文密码+AuthMode）
 │       └── auth/
 │           ├── mod.rs            # AuthError 定义
-│           ├── dual_validator.rs # 双账号并行验证
-│           ├── ldap_verifier.rs  # LDAP 验证器
-│           ├── sspi_verifier.rs  # SSPI/NTLM 验证器
+│           ├── dual_validator.rs # LogonUserW 真实验证
+│           ├── ldap_verifier.rs  # LDAP 验证器（备用）
+│           ├── sspi_verifier.rs  # SSPI/NTLM 验证器（备用）
 │           └── emergency.rs      # 应急覆盖机制
 │
 ├── ad_bridge/                    # AD/LDAP 认证库
@@ -276,14 +288,14 @@ WinSLA/
 ## 认证流程
 
 ```
-用户 A 输入账号密码 ──┐
+主账号输入账号密码 ──┐
                       ├──→ CP 收集凭据 ──→ Named Pipe ──→ Service
-用户 B 输入账号密码 ──┘                                    │
+审批人输入账号密码 ──┘                                    │
                                                           ▼
                                               ┌─────────────────────┐
-                                              │  并行 LDAP Bind 验证  │
-                                              │  User A → DC        │
-                                              │  User B → DC        │
+                                              │  并行 LogonUserW 验证 │
+                                              │  主账号 → DC/SAM     │
+                                              │  审批人 → DC/SAM     │
                                               └──────────┬──────────┘
                                           ┌──────────────┼──────────────┐
                                           ▼              ▼              ▼
@@ -296,13 +308,20 @@ WinSLA/
 
 双账号验证通过后，CP 使用 `CredPackAuthenticationBufferW` 生成 `KERB_INTERACTIVE_LOGON` 序列化缓冲区，经 `GetSerialization` 返回给 LogonUI，由 LSA 完成实际登录。
 
+**支持的账号格式**：
+- `DOMAIN\user` - 域账号（NetBIOS 域名）
+- `user@domain.suffix` - UPN 格式
+- `user` - 本地账号（SAM 数据库）
+
 ---
 
 ## 安全设计
 
 - **密码不落盘**：凭据仅在内存中短暂存在，验证后立即清零
-- **传输保护**：CP → Service 通信使用 HMAC-SHA256 保护
-- **审计追踪**：所有认证事件（成功/失败/应急覆盖）写入日志与数据库
+- **内存零化**：使用 `zeroize::Zeroizing` 包装敏感字段，析构时自动零化内存
+- **传输保护**：CP → Service 通信使用本机 Named Pipe（SYSTEM↔SYSTEM 隔离）
+- **失败锁定**：可配置的失败次数阈值与锁定时长，防止暴力破解
+- **审计追踪**：所有认证事件（成功/失败/应急覆盖/锁定）写入日志与数据库
 - **应急管控**：应急覆盖需授权账号 + 填写原因
 - **最小权限**：Service 以 LocalSystem 运行，CP 在安全桌面隔离执行
 - **静态 CRT**：DLL 静态链接 CRT，避免干净系统缺少 VC++ 运行库导致加载失败
@@ -322,7 +341,7 @@ cargo build --release
 
 # 编译 NSIS 安装程序
 & "C:\Program Files (x86)\NSIS\makensis.exe" installer\winsla-installer.nsi
-# 输出: installer\WinSLA-v2.0.0-Setup.exe
+# 输出: installer\WinSLA-v2.0.9-Setup.exe
 ```
 
 ### 测试
