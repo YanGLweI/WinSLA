@@ -252,6 +252,7 @@ impl AuditDb {
                         "emergency_requires_reason" => policy.emergency_requires_reason = row.1 == "true",
                         "offline_cache_enabled" => policy.offline_cache_enabled = row.1 == "true",
                         "lockout_duration_minutes" => policy.lockout_duration_minutes = row.1.parse().unwrap_or(10),
+                        "default_tile_enabled" => policy.default_tile_enabled = row.1 == "true",
                         _ => {}
                     }
                 }
@@ -365,6 +366,7 @@ pub struct ServicePolicy {
     pub emergency_requires_reason: bool,
     pub offline_cache_enabled: bool,
     pub lockout_duration_minutes: u32,
+    pub default_tile_enabled: bool,  // 是否启用 Windows 默认登录 Tile（默认 false = WinSLA 独占）
 }
 
 impl Default for ServicePolicy {
@@ -376,6 +378,7 @@ impl Default for ServicePolicy {
             emergency_requires_reason: true,
             offline_cache_enabled: true,
             lockout_duration_minutes: 10,
+            default_tile_enabled: false,  // 安装后默认关闭默认 Tile，强制使用 WinSLA
         }
     }
 }

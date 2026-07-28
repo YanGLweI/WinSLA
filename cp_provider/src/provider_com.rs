@@ -23,6 +23,9 @@ use windows::core::GUID;
 
 use crate::credential_com::{DualAuthCredentialCom, TileType};
 
+// Registry policy key path for reading default_tile_enabled setting
+const REGISTRY_POLICY_KEY: &str = r"SOFTWARE\WinSLA\Policy";
+
 // ICredentialProvider IID: {d27c3481-5a1c-45b2-8aaa-c20ebbe8229e}
 pub const IID_ICREDENTIAL_PROVIDER: GUID = GUID {
     data1: 0xd27c3481,
@@ -37,6 +40,22 @@ pub const IID_ICREDENTIAL_PROVIDER_SET_USER_ARRAY: GUID = GUID {
     data2: 0x1c0c,
     data3: 0x4388,
     data4: [0x9c, 0x6d, 0x50, 0x0e, 0x61, 0xbf, 0x84, 0xbd],
+};
+
+// WinSLA private GUID - used to identify our own CP in Filter() implementation
+pub const IID_WINSLA_PRIVATE_ID: GUID = GUID {
+    data1: 0x8DAE8B3E,
+    data2: 0x5C7A,
+    data3: 0x4F9B,
+    data4: [0xB2, 0xE1, 0x3A, 0xC4, 0xD5, 0xF6, 0xA7, 0xB8],
+};
+
+// ICredentialProviderFilter IID: {a5da53f9-d475-4080-a120-910c4a739880}
+pub const IID_ICREDENTIAL_PROVIDER_FILTER: GUID = GUID {
+    data1: 0xa5da53f9,
+    data2: 0xd475,
+    data3: 0x4080,
+    data4: [0xa1, 0x20, 0x91, 0x0c, 0x4a, 0x73, 0x98, 0x80],
 };
 
 /// Usage scenarios
@@ -117,6 +136,17 @@ pub struct SetUserArrayVTable {
     pub set_user_array: unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32,
 }
 
+/// ICredentialProviderFilter vtable (IUnknown + 2 methods).
+/// Based on CREDPROVIDERFILTER_INTERFACE_DEFINITION from SDK.
+#[repr(C)]
+pub struct FilterVTable {
+    pub query_interface: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32,
+    pub add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
+    pub release: unsafe extern "system" fn(*mut c_void) -> u32,
+    pub filter: unsafe extern "system" fn(*mut c_void, u32, u32, *mut *mut c_void, u32, *mut i32) -> i32,
+    pub update_remote_credential: unsafe extern "system" fn(*mut c_void, u32) -> i32,
+}
+
 /// The COM object for our Credential Provider
 #[repr(C)]
 pub struct DualAuthProviderCom {
@@ -129,6 +159,7 @@ pub struct DualAuthProviderCom {
     pub credential_emergency: *mut c_void,  // Emergency override tile (index 1)
     pub user_array: *mut c_void,   // ICredentialProviderUserArray
     pub sua_stub: *mut SetUserArrayStub, // nested interface stub (not ref-counted separately)
+    pub filter_stub: *mut FilterStub,      // nested interface stub for ICredentialProviderFilter
 }
 
 /// Nested stub exposing ICredentialProviderSetUserArray with its own vtable.
@@ -137,6 +168,14 @@ pub struct DualAuthProviderCom {
 #[repr(C)]
 pub struct SetUserArrayStub {
     pub vtable: *const SetUserArrayVTable,
+    pub owner: *mut DualAuthProviderCom,
+}
+
+/// Nested stub exposing ICredentialProviderFilter with its own vtable.
+/// Similar design to SUAStub: IUnknown methods forward to owner, Filter methods implement policy.
+#[repr(C)]
+pub struct FilterStub {
+    pub vtable: *const FilterVTable,
     pub owner: *mut DualAuthProviderCom,
 }
 
@@ -161,6 +200,14 @@ static SUA_VTABLE: SetUserArrayVTable = SetUserArrayVTable {
     set_user_array: sua_set_user_array,
 };
 
+static FILTER_VTABLE: FilterVTable = FilterVTable {
+    query_interface: filter_query_interface,
+    add_ref: filter_add_ref,
+    release: filter_release,
+    filter: filter_filter,
+    update_remote_credential: filter_update_remote_credential,
+};
+
 impl DualAuthProviderCom {
     /// Create a new provider instance, returns raw pointer with refcount=1
     pub fn create_instance() -> *mut c_void {
@@ -176,6 +223,7 @@ impl DualAuthProviderCom {
             credential_emergency: std::ptr::null_mut(),
             user_array: std::ptr::null_mut(),
             sua_stub: std::ptr::null_mut(),
+            filter_stub: std::ptr::null_mut(),
         });
         let raw = Box::into_raw(provider);
 
@@ -186,6 +234,15 @@ impl DualAuthProviderCom {
         });
         unsafe {
             (*raw).sua_stub = Box::into_raw(stub);
+        }
+
+        // Create the nested Filter stub pointing back at the provider.
+        let stub = Box::new(FilterStub {
+            vtable: &FILTER_VTABLE,
+            owner: raw,
+        });
+        unsafe {
+            (*raw).filter_stub = Box::into_raw(stub);
         }
 
         raw as *mut c_void
@@ -211,6 +268,19 @@ unsafe extern "system" fn provider_query_interface(
         *ppv = provider.sua_stub as *mut c_void;
         provider_add_ref(this); // shared refcount on the owner
         trace("Provider::QI -> ICredentialProviderSetUserArray (stub)");
+        0 // S_OK
+    } else if *iid == IID_ICREDENTIAL_PROVIDER_FILTER {
+        // Return the Filter stub pointer
+        let provider = &*(this as *const DualAuthProviderCom);
+        *ppv = provider.filter_stub as *mut c_void;
+        provider_add_ref(this); // shared refcount on the owner
+        trace("Provider::QI -> ICredentialProviderFilter (stub)");
+        0 // S_OK
+    } else if *iid == IID_WINSLA_PRIVATE_ID {
+        // Private ID - our own marker for Filter() self-identification
+        *ppv = this;
+        provider_add_ref(this);
+        trace("Provider::QI -> IID_WINSLA_PRIVATE_ID (self-id)");
         0 // S_OK
     } else {
         *ppv = std::ptr::null_mut();
@@ -245,9 +315,13 @@ unsafe extern "system" fn provider_release(this: *mut c_void) -> u32 {
             let rel = (*(vtable as *const SetUserArrayVTable)).release;
             rel(p.user_array);
         }
-        // Free the nested stub (it is not independently ref-counted)
+        // Free the nested SUA stub (it is not independently ref-counted)
         if !p.sua_stub.is_null() {
             drop(Box::from_raw(p.sua_stub));
+        }
+        // Free the nested Filter stub
+        if !p.filter_stub.is_null() {
+            drop(Box::from_raw(p.filter_stub));
         }
         trace("Provider::Release -> destroyed");
     }
@@ -472,4 +546,159 @@ unsafe extern "system" fn sua_set_user_array(
     }
 
     0 // S_OK
+}
+
+// ─── ICredentialProviderFilter (nested stub) ─────────────────────
+
+unsafe extern "system" fn filter_query_interface(
+    this: *mut c_void,
+    riid: *const GUID,
+    ppv: *mut *mut c_void,
+) -> i32 {
+    // Forward to the owner's QueryInterface
+    let stub = &*(this as *const FilterStub);
+    provider_query_interface(stub.owner as *mut c_void, riid, ppv)
+}
+
+unsafe extern "system" fn filter_add_ref(this: *mut c_void) -> u32 {
+    let stub = &*(this as *const FilterStub);
+    provider_add_ref(stub.owner as *mut c_void)
+}
+
+unsafe extern "system" fn filter_release(this: *mut c_void) -> u32 {
+    let stub = &*(this as *const FilterStub);
+    provider_release(stub.owner as *mut c_void)
+}
+
+unsafe extern "system" fn filter_filter(
+    this: *mut c_void,
+    cpus: u32,
+    _dwflags: u32,
+    rgpproviders: *mut *mut c_void,
+    cproviders: u32,
+    rgballow: *mut i32,
+) -> i32 {
+    trace(&format!("Filter::Filter cpus={} providers={}", cpus, cproviders));
+    
+    // Only apply to LOGON/UNLOCK scenarios
+    if cpus != CPUS_LOGON && cpus != CPUS_UNLOCK_WORKSTATION {
+        return -2147467263i32; // E_NOTIMPL - Don't interfere with other scenarios
+    }
+    
+    // Read registry policy: if default_tile_enabled=true, don't filter anything
+    let hide_others = match read_registry_default_tile_enabled() {
+        Ok(Some(true)) => false,   // Policy allows default Tile → show everything
+        Ok(Some(false)) => true,   // Policy disables default Tile → filter non-WinSLA
+        _ => false,                 // Fail-open: can't read → show everything
+    };
+    
+    if !hide_others {
+        // No filtering: allow all providers
+        for i in 0..cproviders {
+            *rgballow.add(i as usize) = 1; // TRUE
+        }
+        trace("Filter: no filtering enabled");
+        return 0; // S_OK
+    }
+    
+    // Filtering is enabled - mark ourselves as allowed, others as disallowed
+    // Self-identification: QI IID_WINSLA_PRIVATE_ID on each provider pointer
+    let stub = &*(this as *const FilterStub);
+    let own_ptr = stub.owner as *const c_void;
+    let guid_private = IID_WINSLA_PRIVATE_ID;
+    
+    for i in 0..cproviders {
+        let punknown = *rgpproviders.add(i as usize);
+        
+        // Try to QI our private ID
+        let mut ppv = std::ptr::null_mut();
+        let mut found_ourselves = false;
+        
+        // We know the owner implements IID_WINSLA_PRIVATE_ID
+        // Try QueryInterface on the passed-in provider pointer
+        let qitbl = *(punknown as *const *const c_void);
+        let qi_fn = *(qitbl as *const fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32);
+        
+        let hr = unsafe { qi_fn(punknown, &guid_private, &mut ppv) };
+        
+        if hr == 0 && !ppv.is_null() {
+            // Successfully identified as our own CP
+            found_ourselves = true;
+            // Free the returned pointer
+            let freetbl = *(punknown as *const *const c_void);
+            let relfn = *(freetbl as *const fn(*mut c_void) -> u32);
+            unsafe { relfn(ppv); }
+        }
+        
+        // Allow only if it's our own provider
+        *rgballow.add(i as usize) = if found_ourselves { 1 } else { 0 };
+    }
+    
+    trace("Filter: applied restrictive mode (WinSLA-only)");
+    0 // S_OK
+}
+
+unsafe extern "system" fn filter_update_remote_credential(
+    _this: *mut c_void,
+    _dwflags: u32,
+) -> i32 {
+    // RDP credential update - not supported (return E_NOTIMPL)
+    trace("Filter::UpdateRemoteCredential -> E_NOTIMPL");
+    -2147467263i32 // E_NOTIMPL
+}
+
+// ─── Helper functions ───────────────────────────────────────────
+
+/// Read DefaultTileEnabled from Windows Registry
+/// Returns None if key doesn't exist or read fails
+fn read_registry_default_tile_enabled() -> Result<Option<bool>, String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, HKEY, REG_SAM_FLAGS};
+    
+    // Windows API constants
+    const KEY_READ: u32 = 0x20019; // KEY_READ access mask
+    
+    let wide_path: Vec<u16> = OsStr::new(REGISTRY_POLICY_KEY)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    
+    let mut hkey = HKEY(std::ptr::null_mut());
+    let result = unsafe {
+        RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            windows::core::PCWSTR(wide_path.as_ptr()),
+            0,
+            REG_SAM_FLAGS(KEY_READ),
+            &mut hkey,
+        )
+    };
+    
+    if result != ERROR_SUCCESS {
+        return Ok(None); // Key doesn't exist yet
+    }
+    
+    let mut value: u32 = 0;
+    let mut vsize: u32 = 4;
+    let value_name = OsStr::new("DefaultTileEnabled").encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let result2 = unsafe {
+        RegQueryValueExW(
+            hkey,
+            windows::core::PCWSTR(value_name.as_ptr()),
+            None,
+            None,
+            Some(&mut value as *mut _ as *mut u8),
+            Some(&mut vsize),
+        )
+    };
+    
+    unsafe { RegCloseKey(hkey); }
+    
+    if result2 != ERROR_SUCCESS {
+        Ok(None)
+    } else {
+        Ok(Some(value == 1))
+    }
 }

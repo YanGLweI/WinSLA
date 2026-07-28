@@ -12,15 +12,118 @@ use crate::com_types::{AuthMode, AuthRequest, AuthResponse};
 use crate::ServiceState;
 
 const PIPE_PATH: &str = r"\\.\pipe\winsla-auth-pipe";
+const REGISTRY_POLICY_KEY: &str = r"SOFTWARE\WinSLA\Policy";
 
 /// Main pipe server loop (blocking - spawns its own tokio runtime)
 pub fn run_pipe_server(state: Arc<Mutex<ServiceState>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     log::info!("Starting pipe server on {}", PIPE_PATH);
 
+    // Start background policy sync thread (reads policy from shared DB, writes to registry)
+    let state_clone = Arc::clone(&state);
+    std::thread::spawn(move || {
+        if let Err(e) = run_policy_sync_loop(state_clone) {
+            log::error!("Policy sync loop error: {}", e);
+        }
+    });
+
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
         run_async_pipe_server(state).await
     })
+}
+
+/// Background thread that polls the shared database for policy changes and writes them to registry.
+/// Runs every 10 seconds, only writes when value actually changes.
+fn run_policy_sync_loop(state: Arc<Mutex<ServiceState>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::{ERROR_SUCCESS, HANDLE};
+    use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, RegSetValueExW, HKEY_LOCAL_MACHINE};
+    
+    const SYNC_INTERVAL_SECS: u64 = 10;
+    let mut last_value: Option<bool> = None;
+    
+    loop {
+        // Try to read policy from shared DB
+        let new_value = AuditDb::open()
+            .ok()
+            .as_ref()
+            .map(|db| db.get_policy())
+            .map(|policy| policy.default_tile_enabled);
+        
+        // Only write to registry if value changed
+        if new_value != last_value {
+            if let Some(enabled) = new_value {
+                let result = write_registry_policy_key(enabled);
+                match result {
+                    Ok(_) => {
+                        log::info!("Policy synced to registry: default_tile_enabled={}", enabled);
+                        last_value = Some(enabled);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to write registry key: {}", e);
+                        // Continue syncing even if registry write fails (fail-safe)
+                    }
+                }
+            } else {
+                // Can't open DB - log warning but continue
+                log::warn!("Cannot open audit DB for policy sync");
+            }
+        }
+        
+        // Wait for next sync interval
+        std::thread::sleep(std::time::Duration::from_secs(SYNC_INTERVAL_SECS));
+    }
+}
+
+/// Write policy configuration to Windows Registry under HKLM\SOFTWARE\WinSLA\Policy\DefaultTileEnabled
+fn write_registry_policy_key(default_tile_enabled: bool) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::{ERROR_SUCCESS};
+    use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, RegSetValueExW, HKEY_LOCAL_MACHINE, HKEY};
+    
+    // Convert registry path to wide string
+    let wide_path: Vec<u16> = OsStr::new(REGISTRY_POLICY_KEY)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    
+    let mut hkey = HKEY(std::ptr::null_mut());
+    let result = unsafe {
+        RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            windows::core::PCWSTR(wide_path.as_ptr()),
+            0,
+            windows::Win32::System::Registry::REG_SAM_FLAGS(0x0002), // KEY_WRITE access
+            &mut hkey,
+        )
+    };
+    
+    if result != ERROR_SUCCESS {
+        return Err(format!("Failed to open registry key: {:?}", result));
+    }
+    
+    // Write DWORD value DefaultTileEnabled
+    let value_name = OsStr::new("DefaultTileEnabled").encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let value_data: [u8; 4] = (if default_tile_enabled { 1u32 } else { 0u32 }).to_le_bytes();
+    let result2 = unsafe {
+        RegSetValueExW(
+            hkey,
+            windows::core::PCWSTR(value_name.as_ptr()),
+            0,
+            windows::Win32::System::Registry::REG_VALUE_TYPE(4), // REG_DWORD
+            Some(&value_data),
+        )
+    };
+    
+    unsafe { RegCloseKey(hkey); }
+    
+    if result2 != ERROR_SUCCESS {
+        return Err(format!("Failed to write registry value: {:?}", result2));
+    }
+    
+    Ok(())
 }
 
 /// Async pipe server implementation

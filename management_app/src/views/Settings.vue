@@ -10,6 +10,7 @@ const form = ref<PolicyConfig>({
   emergency_requires_reason: true,
   offline_cache_enabled: true,
   lockout_duration_minutes: 10,
+  default_tile_enabled: false,  // 安装后默认关闭默认 Tile，强制使用 WinSLA
 })
 const loading = ref(false)
 const saving = ref(false)
@@ -58,6 +59,14 @@ onMounted(load)
         <div class="setting-row">
           <span class="setting-label">锁定时长 (分钟)</span>
           <el-input-number v-model="form.lockout_duration_minutes" :min="1" :max="120" size="small" />
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">默认登录 Tile</span>
+          <el-switch v-model="form.default_tile_enabled" size="small" />
+        </div>
+        <div class="setting-row">
+          <span class="setting-label"></span>
+          <el-alert title="建议保持关闭状态。开启后会显示 Windows 默认登录方式（单人密码）。" type="warning" :closable="false" />
         </div>
       </div>
 

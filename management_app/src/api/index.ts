@@ -51,6 +51,7 @@ export interface PolicyConfig {
   emergency_requires_reason: boolean
   offline_cache_enabled: boolean
   lockout_duration_minutes: number
+  default_tile_enabled: boolean  // 是否启用 Windows 默认登录 Tile（默认 false = WinSLA 独占）
 }
 
 export interface ServiceActionResult {

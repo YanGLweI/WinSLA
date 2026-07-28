@@ -56,6 +56,7 @@ pub struct PolicyConfig {
     pub emergency_requires_reason: bool,
     pub offline_cache_enabled: bool,
     pub lockout_duration_minutes: u32,
+    pub default_tile_enabled: bool,  // 是否启用 Windows 默认登录 Tile（默认 false = WinSLA 独占）
 }
 
 impl Default for PolicyConfig {
@@ -67,6 +68,7 @@ impl Default for PolicyConfig {
             emergency_requires_reason: true,
             offline_cache_enabled: true,
             lockout_duration_minutes: 10,
+            default_tile_enabled: false,  // 安装后默认关闭默认 Tile，强制使用 WinSLA
         }
     }
 }
