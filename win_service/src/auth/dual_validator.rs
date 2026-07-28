@@ -5,22 +5,29 @@ use crate::auth::{AuthError, AuthResult};
 use crate::audit::AuditDb;
 use log::{debug, error, info, warn};
 
-/// Validate two accounts' credentials concurrently
+/// Validate two accounts' credentials concurrently using real Windows logon
 pub async fn validate_dual_accounts(
     user_a_username: &str,
-    user_a_password: &[u8],
+    user_a_password: &str,
     user_b_username: &str,
-    user_b_password: &[u8],
+    user_b_password: &str,
 ) -> Result<(), AuthError> {
-    debug!("Starting dual account verification for {} and {}", 
+    debug!("Starting dual account verification for {} and {}",
            user_a_username, user_b_username);
-    
-    // Perform both verifications in parallel
-    let (user_a_result, user_b_result) = join!(
-        verify_single_account(user_a_username, user_a_password),
-        verify_single_account(user_b_username, user_b_password)
+
+    // LogonUserW may block on DC communication, so run both verifications on
+    // the blocking thread pool in parallel.
+    let (a_user, a_pass) = (user_a_username.to_string(), user_a_password.to_string());
+    let (b_user, b_pass) = (user_b_username.to_string(), user_b_password.to_string());
+
+    let (handle_a, handle_b) = join!(
+        tokio::task::spawn_blocking(move || verify_password_windows(&a_user, &a_pass)),
+        tokio::task::spawn_blocking(move || verify_password_windows(&b_user, &b_pass)),
     );
-    
+
+    let user_a_result = handle_a.map_err(|e| AuthError::ServiceError(format!("verify task failed: {}", e)))?;
+    let user_b_result = handle_b.map_err(|e| AuthError::ServiceError(format!("verify task failed: {}", e)))?;
+
     match (user_a_result, user_b_result) {
         (Ok(_), Ok(_)) => {
             info!("Both users authenticated successfully");
@@ -41,8 +48,90 @@ pub async fn validate_dual_accounts(
     }
 }
 
+/// Verify a Windows account password with LogonUserW (network logon type).
+///
+/// Supported username formats:
+///   "DOMAIN\\user"        -> domain=DOMAIN, user=user
+///   "user@domain.suffix"  -> UPN, passed as-is with NULL domain
+///   "user"                -> local account database (NULL domain)
+pub fn verify_password_windows(username: &str, password: &str) -> Result<(), AuthError> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        LogonUserW, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT,
+    };
+
+    if username.trim().is_empty() || password.is_empty() {
+        return Err(AuthError::InvalidCredentials("用户名或密码为空".to_string()));
+    }
+
+    let (user_part, domain_part): (String, Option<String>) = if let Some(pos) = username.find('\\') {
+        let domain = username[..pos].to_string();
+        let user = username[pos + 1..].to_string();
+        (user, if domain.is_empty() { None } else { Some(domain) })
+    } else {
+        (username.to_string(), None)
+    };
+
+    let user_w: Vec<u16> = user_part.encode_utf16().chain(std::iter::once(0)).collect();
+    let pass_w: Vec<u16> = password.encode_utf16().chain(std::iter::once(0)).collect();
+    let domain_w: Vec<u16> = domain_part
+        .as_deref()
+        .unwrap_or("")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let domain_pcwstr = if domain_part.is_some() {
+        PCWSTR(domain_w.as_ptr())
+    } else {
+        PCWSTR::null()
+    };
+
+    let mut handle = HANDLE::default();
+    let result = unsafe {
+        LogonUserW(
+            PCWSTR(user_w.as_ptr()),
+            domain_pcwstr,
+            PCWSTR(pass_w.as_ptr()),
+            LOGON32_LOGON_NETWORK,
+            LOGON32_PROVIDER_DEFAULT,
+            &mut handle,
+        )
+    };
+
+    match result {
+        Ok(()) => {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            // HRESULT_FROM_WIN32: low 16 bits carry the Win32 error code
+            let hr = e.code().0 as u32;
+            let win32_code = hr & 0xFFFF;
+            warn!("LogonUserW failed for {}: HRESULT=0x{:08X} win32={}", username, hr, win32_code);
+            Err(AuthError::InvalidCredentials(map_logon_error(win32_code)))
+        }
+    }
+}
+
+/// Map common Win32 logon error codes to user-facing Chinese messages
+fn map_logon_error(win32_code: u32) -> String {
+    match win32_code {
+        1326 => "用户名或密码错误".to_string(),
+        1327 => "账号受限：不允许空密码登录".to_string(),
+        1331 => "账号已被禁用".to_string(),
+        1907 => "密码已过期，必须先更改密码".to_string(),
+        1909 => "账号已被域策略锁定".to_string(),
+        1385 => "该账号没有网络登录权限".to_string(),
+        1355 => "域控制器不可用或域名无效".to_string(),
+        _ => format!("凭据验证失败 (错误码 {})", win32_code),
+    }
+}
+
 /// Extract bare username from various formats: "HOT\ylw" / "ylw@hot.local" / "ylw" → "ylw"
-fn extract_bare_username(input: &str) -> String {
+pub(crate) fn extract_bare_username(input: &str) -> String {
     if let Some(pos) = input.find('\\') {
         input[pos + 1..].to_lowercase()
     } else if let Some(pos) = input.find('@') {
@@ -98,88 +187,29 @@ pub async fn check_pairing_rule(account_username: &str, approver_username: &str)
     Err(AuthError::InvalidCredentials(msg))
 }
 
-/// Verify a single account's credentials using LDAP
-async fn verify_single_account(username: &str, password: &[u8]) -> Result<(), AuthError> {
-    debug!("Verifying credentials for user: {}", username);
-    
-    // Try LDAP authentication first
-    match try_ldap_auth(username, password).await {
-        Ok(_) => {
-            info!("LDAP auth succeeded for {}", username);
-            Ok(())
-        }
-        Err(e) => {
-            debug!("LDAP auth failed, trying fallback: {}", e);
-            
-            // Try SSPI as fallback
-            match try_sspi_auth(username, password).await {
-                Ok(_) => {
-                    info!("SSPI auth succeeded for {}", username);
-                    Ok(())
-                }
-                Err(_) => {
-                    Err(e) // Return LDAP error as primary
-                }
-            }
-        }
-    }
-}
-
-/// LDAP Simple Bind authentication
-async fn try_ldap_auth(username: &str, password: &[u8]) -> Result<(), AuthError> {
-    // This is a placeholder - production code needs proper LDAP implementation
-    // We'll need to link against OpenLDAP or use a Rust LDAP library
-    
-    // Simulated check for development
-    if password.is_empty() || username.is_empty() {
-        return Err(AuthError::InvalidCredentials("Empty credentials".to_string()));
-    }
-    
-    // In production, this would:
-    // 1. Connect to domain controller via LDAP/LDAPS
-    // 2. Perform simple bind with the DN of the user
-    // 3. Check if the bind succeeds
-    
-    // For dev, we accept any non-empty credentials
-    // TODO: Implement real LDAP binding
-    debug!("LDAP auth simulated for {}", username);
-    Ok(())
-}
-
-/// SSPI (NTLM/Kerberos) authentication
-async fn try_sspi_auth(username: &str, password: &[u8]) -> Result<(), AuthError> {
-    // Placeholder for SSPI implementation
-    // Would use windows-rs to call InitializeSecurityContext
-    
-    if password.is_empty() || username.is_empty() {
-        return Err(AuthError::InvalidCredentials("Empty credentials".to_string()));
-    }
-    
-    debug!("SSPI auth simulated for {}", username);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_both_success() {
-        let result = validate_dual_accounts(
-            "user1@DOMAIN.COM", b"pass1",
-            "user2@DOMAIN.COM", b"pass2",
-        ).await;
-        
-        assert!(result.is_ok());
+    #[test]
+    fn test_empty_credentials_rejected() {
+        assert!(verify_password_windows("", "pass").is_err());
+        assert!(verify_password_windows("user", "").is_err());
+    }
+
+    #[test]
+    fn test_error_mapping() {
+        assert!(map_logon_error(1326).contains("密码错误"));
+        assert!(map_logon_error(1909).contains("锁定"));
     }
 
     #[tokio::test]
-    async fn test_user_a_fail() {
+    async fn test_empty_password_fails() {
         let result = validate_dual_accounts(
-            "invalid", b"",
-            "user2@DOMAIN.COM", b"pass2",
+            "user1", "",
+            "user2", "pass2",
         ).await;
-        
+
         assert!(result.is_err());
     }
 }

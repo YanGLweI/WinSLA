@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows::core::GUID;
 
-use crate::credential_com::DualAuthCredentialCom;
+use crate::credential_com::{DualAuthCredentialCom, TileType};
 
 // ICredentialProvider IID: {d27c3481-5a1c-45b2-8aaa-c20ebbe8229e}
 pub const IID_ICREDENTIAL_PROVIDER: GUID = GUID {
@@ -49,8 +49,8 @@ const CPFT_EDIT_TEXT: u32 = 4;
 const CPFT_PASSWORD_TEXT: u32 = 5;
 const CPFT_SUBMIT_BUTTON: u32 = 9;
 
-/// Number of fields in our credential tile
-const FIELD_COUNT: u32 = 6;
+/// Number of fields in the shared field descriptor set (union of both tiles)
+const FIELD_COUNT: u32 = 7;
 
 // ─── Diagnostics ────────────────────────────────────────────────
 // LogonUI runs on the secure desktop; a file trace is the only practical way
@@ -125,7 +125,8 @@ pub struct DualAuthProviderCom {
     pub usage_scenario: u32,
     pub events: *mut c_void,       // ICredentialProviderEvents callback
     pub advise_context: usize,
-    pub credential: *mut c_void,   // The single DualAuthCredentialCom instance
+    pub credential_dual: *mut c_void,       // Dual-control tile (index 0)
+    pub credential_emergency: *mut c_void,  // Emergency override tile (index 1)
     pub user_array: *mut c_void,   // ICredentialProviderUserArray
     pub sua_stub: *mut SetUserArrayStub, // nested interface stub (not ref-counted separately)
 }
@@ -171,7 +172,8 @@ impl DualAuthProviderCom {
             usage_scenario: 0,
             events: std::ptr::null_mut(),
             advise_context: 0,
-            credential: std::ptr::null_mut(),
+            credential_dual: std::ptr::null_mut(),
+            credential_emergency: std::ptr::null_mut(),
             user_array: std::ptr::null_mut(),
             sua_stub: std::ptr::null_mut(),
         });
@@ -228,12 +230,14 @@ unsafe extern "system" fn provider_release(this: *mut c_void) -> u32 {
     let count = provider.ref_count.fetch_sub(1, Ordering::Release) - 1;
     if count == 0 {
         let p = Box::from_raw(this as *mut DualAuthProviderCom);
-        // Release the credential if we hold one
-        if !p.credential.is_null() {
-            let cred_vtable = *(p.credential as *const *const c_void);
-            use crate::credential_com::CredentialVTable;
-            let rel = (*(cred_vtable as *const CredentialVTable)).release;
-            rel(p.credential);
+        // Release both credential tiles if we hold them
+        use crate::credential_com::CredentialVTable;
+        for cred_ptr in [p.credential_dual, p.credential_emergency] {
+            if !cred_ptr.is_null() {
+                let cred_vtable = *(cred_ptr as *const *const c_void);
+                let rel = (*(cred_vtable as *const CredentialVTable)).release;
+                rel(cred_ptr);
+            }
         }
         // Release user array
         if !p.user_array.is_null() {
@@ -328,14 +332,16 @@ unsafe extern "system" fn provider_get_field_descriptor_at(
         return -2147024809i32; // E_INVALIDARG
     }
 
-    // Field definitions: (type, label)
+    // Field definitions: (type, label) — union of both tiles; each credential
+    // hides the fields that do not apply to it via GetFieldState.
     let (cpft, label): (u32, &str) = match index {
-        0 => (CPFT_EDIT_TEXT, "用户名 A"),
-        1 => (CPFT_PASSWORD_TEXT, "密码 A"),
-        2 => (CPFT_EDIT_TEXT, "用户名 B"),
-        3 => (CPFT_PASSWORD_TEXT, "密码 B"),
-        4 => (CPFT_SUBMIT_BUTTON, "验证并登录"),
-        5 => (CPFT_SMALL_TEXT, "状态"),
+        0 => (CPFT_EDIT_TEXT, "用户名"),
+        1 => (CPFT_PASSWORD_TEXT, "密码"),
+        2 => (CPFT_EDIT_TEXT, "审批人"),
+        3 => (CPFT_PASSWORD_TEXT, "审批人密码"),
+        4 => (CPFT_EDIT_TEXT, "应急原因"),
+        5 => (CPFT_SUBMIT_BUTTON, "验证并登录"),
+        6 => (CPFT_SMALL_TEXT, "状态"),
         _ => unreachable!(),
     };
 
@@ -376,8 +382,8 @@ unsafe extern "system" fn provider_get_credential_count(
     default_index: *mut u32,
     auto_logon: *mut i32,
 ) -> i32 {
-    trace("Provider::GetCredentialCount -> 1");
-    *count = 1;           // We have exactly 1 credential tile (dual-auth)
+    trace("Provider::GetCredentialCount -> 2");
+    *count = 2;           // Tile 0: dual-control login; Tile 1: emergency override
     *default_index = u32::MAX; // CREDENTIAL_PROVIDER_NO_DEFAULT
     *auto_logon = 0;      // FALSE - don't auto-logon
     0 // S_OK
@@ -389,27 +395,34 @@ unsafe extern "system" fn provider_get_credential_at(
     ppcpc: *mut *mut c_void,
 ) -> i32 {
     trace(&format!("Provider::GetCredentialAt index={} ppcpc={:p}", index, ppcpc));
-    if index != 0 {
+    if index > 1 {
         return -2147024809i32; // E_INVALIDARG
     }
 
     let provider = &mut *(this as *mut DualAuthProviderCom);
 
-    // Create credential on first request
-    if provider.credential.is_null() {
-        provider.credential = DualAuthCredentialCom::create_instance();
-        if provider.credential.is_null() {
+    // Select the slot for the requested tile and create it on first request
+    let slot = if index == 0 {
+        &mut provider.credential_dual
+    } else {
+        &mut provider.credential_emergency
+    };
+
+    if slot.is_null() {
+        let tile_type = if index == 0 { TileType::Dual } else { TileType::Emergency };
+        *slot = DualAuthCredentialCom::create_instance(tile_type);
+        if slot.is_null() {
             return -2147467259i32; // E_OUTOFMEMORY
         }
     }
 
     // Return the credential pointer. AddRef for the caller.
-    *ppcpc = provider.credential;
-    let cred_vtable = *(provider.credential as *const *const c_void);
+    *ppcpc = *slot;
+    let cred_vtable = *(*slot as *const *const c_void);
     use crate::credential_com::CredentialVTable;
     let addref_fn = (*(cred_vtable as *const CredentialVTable)).add_ref;
-    addref_fn(provider.credential);
-    trace(&format!("Provider::GetCredentialAt -> S_OK credential={:p}", provider.credential));
+    addref_fn(*slot);
+    trace(&format!("Provider::GetCredentialAt -> S_OK credential={:p}", *slot));
     0 // S_OK
 }
 

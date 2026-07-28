@@ -19,10 +19,10 @@ pub fn submit_credentials(credential: &mut DualAuthCredential) -> Result<AuthRes
     credential.status_message = "Verifying credentials...".to_string();
 
     // Build auth request
-    let request = AuthRequest::new(
-        credential.user_a_username.clone(),
+    let request = AuthRequest::new_dual(
+        &credential.user_a_username,
         &credential.user_a_password,
-        credential.user_b_username.clone(),
+        &credential.user_b_username,
         &credential.user_b_password,
     );
 
@@ -43,6 +43,12 @@ pub fn submit_credentials(credential: &mut DualAuthCredential) -> Result<AuthRes
         }
         AuthResponse::BothFailed(msg_a, msg_b) => {
             credential.mark_failed(&format!("User A: {} | User B: {}", msg_a, msg_b));
+        }
+        AuthResponse::Locked { remaining_secs } => {
+            credential.mark_failed(&format!("账号已锁定，请 {} 秒后重试", remaining_secs));
+        }
+        AuthResponse::EmergencyDenied(reason) => {
+            credential.mark_failed(&format!("应急登录被拒绝：{}", reason));
         }
         AuthResponse::Timeout => {
             credential.mark_failed("Verification timed out");

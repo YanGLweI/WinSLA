@@ -9,6 +9,7 @@ const form = ref<PolicyConfig>({
   allow_emergency_override: true,
   emergency_requires_reason: true,
   offline_cache_enabled: true,
+  lockout_duration_minutes: 10,
 })
 const loading = ref(false)
 const saving = ref(false)
@@ -53,6 +54,10 @@ onMounted(load)
         <div class="setting-row">
           <span class="setting-label">认证超时 (秒)</span>
           <el-input-number v-model="form.auth_timeout_secs" :min="5" :max="120" :step="5" size="small" />
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">锁定时长 (分钟)</span>
+          <el-input-number v-model="form.lockout_duration_minutes" :min="1" :max="120" size="small" />
         </div>
       </div>
 

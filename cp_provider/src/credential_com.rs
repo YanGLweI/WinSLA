@@ -7,6 +7,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows::core::GUID;
+use zeroize::Zeroizing;
 
 // ICredentialProviderCredential IID: {63913a93-40c1-481a-818d-4072ff8c70cc}
 pub const IID_ICREDENTIAL_PROVIDER_CREDENTIAL: GUID = GUID {
@@ -32,14 +33,24 @@ const IID_ICREDENTIAL_PROVIDER_CREDENTIAL_WITH_SUBMISSION_OPTIONS: GUID = GUID {
     data4: [0x94, 0x85, 0x56, 0xA3, 0x57, 0x26, 0xFE, 0x1C],
 };
 
-// Field indices
-const FIELD_USER_A_NAME: u32 = 0;
+// Field indices (union of both tiles; visibility is controlled per-tile in GetFieldState)
+const FIELD_USER_A_NAME: u32 = 0;   // Dual: primary account; Emergency: emergency account
 const FIELD_USER_A_PASS: u32 = 1;
-const FIELD_USER_B_NAME: u32 = 2;
-const FIELD_USER_B_PASS: u32 = 3;
-const FIELD_SUBMIT: u32 = 4;
-const FIELD_STATUS: u32 = 5;
-const FIELD_COUNT: u32 = 6;
+const FIELD_USER_B_NAME: u32 = 2;   // Dual only: approver
+const FIELD_USER_B_PASS: u32 = 3;   // Dual only: approver password
+const FIELD_REASON: u32 = 4;        // Emergency only: override reason
+const FIELD_SUBMIT: u32 = 5;
+const FIELD_STATUS: u32 = 6;
+const FIELD_COUNT: u32 = 7;
+
+/// Which login tile a credential instance represents
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileType {
+    /// Dual-control login (primary account + approver)
+    Dual,
+    /// Emergency override login (single authorized account + reason)
+    Emergency,
+}
 
 // Field states
 const CPFS_HIDDEN: u32 = 0;
@@ -121,16 +132,18 @@ pub struct DualAuthCredentialCom {
     pub ref_count: AtomicU32,
     pub events: *mut c_void,
     pub advise_context: usize,
-    // Field values (stored as heap-allocated wide strings)
+    pub tile_type: TileType,
+    // Field values (stored as heap-allocated wide strings; passwords zeroized on drop)
     pub user_a_name: Vec<u16>,
-    pub user_a_pass: Vec<u16>,
+    pub user_a_pass: Zeroizing<Vec<u16>>,
     pub user_b_name: Vec<u16>,
-    pub user_b_pass: Vec<u16>,
+    pub user_b_pass: Zeroizing<Vec<u16>>,
+    pub emergency_reason: Zeroizing<Vec<u16>>,
     pub status_text: Vec<u16>,
     // Authentication result
     pub auth_success: bool,
     pub serialized_user: Vec<u16>,  // DOMAIN\user for logon
-    pub serialized_pass: Vec<u16>,
+    pub serialized_pass: Zeroizing<Vec<u16>>,
     // Nested stub for ICredentialProviderCredentialWithFieldOptions
     pub field_options_stub: *mut FieldOptionsStub,
     // Nested stub for ICredentialProviderCredentialWithSubmissionOptions
@@ -211,20 +224,26 @@ static SUBMISSION_OPTIONS_VTABLE: SubmissionOptionsVTable = SubmissionOptionsVTa
 };
 
 impl DualAuthCredentialCom {
-    pub fn create_instance() -> *mut c_void {
+    pub fn create_instance(tile_type: TileType) -> *mut c_void {
+        let initial_status = match tile_type {
+            TileType::Dual => "双控登录",
+            TileType::Emergency => "应急登录（需授权账号）",
+        };
         let cred = Box::new(DualAuthCredentialCom {
             vtable: &CREDENTIAL_VTABLE,
             ref_count: AtomicU32::new(1),
             events: std::ptr::null_mut(),
             advise_context: 0,
+            tile_type,
             user_a_name: to_wide(""),
-            user_a_pass: to_wide(""),
+            user_a_pass: Zeroizing::new(to_wide("")),
             user_b_name: to_wide(""),
-            user_b_pass: to_wide(""),
-            status_text: to_wide("双控登录"),
+            user_b_pass: Zeroizing::new(to_wide("")),
+            emergency_reason: Zeroizing::new(to_wide("")),
+            status_text: to_wide(initial_status),
             auth_success: false,
             serialized_user: Vec::new(),
-            serialized_pass: Vec::new(),
+            serialized_pass: Zeroizing::new(Vec::new()),
             field_options_stub: std::ptr::null_mut(),
             submission_options_stub: std::ptr::null_mut(),
         });
@@ -328,14 +347,21 @@ unsafe extern "system" fn cred_set_deselected(_this: *mut c_void) -> i32 {
 }
 
 unsafe extern "system" fn cred_get_field_state(
-    _this: *mut c_void, field: u32, state: *mut u32, interactive: *mut u32,
+    this: *mut c_void, field: u32, state: *mut u32, interactive: *mut u32,
 ) -> i32 {
     crate::provider_com::trace(&format!("Credential::GetFieldState field={}", field));
     if field >= FIELD_COUNT {
         return -2147024809i32; // E_INVALIDARG
     }
-    // All fields visible in both selected and deselected tiles
-    *state = CPFS_DISPLAY_IN_BOTH;
+    let c = &*(this as *const DualAuthCredentialCom);
+    // Per-tile field visibility:
+    //   Dual tile      -> hides the emergency reason field
+    //   Emergency tile -> hides the approver fields
+    let visible = match c.tile_type {
+        TileType::Dual => field != FIELD_REASON,
+        TileType::Emergency => field != FIELD_USER_B_NAME && field != FIELD_USER_B_PASS,
+    };
+    *state = if visible { CPFS_DISPLAY_IN_BOTH } else { CPFS_HIDDEN };
     *interactive = if field == FIELD_USER_A_NAME { CPFIS_FOCUSED } else { CPFIS_NONE };
     0
 }
@@ -350,6 +376,7 @@ unsafe extern "system" fn cred_get_string_value(
         FIELD_USER_A_PASS => &c.user_a_pass,
         FIELD_USER_B_NAME => &c.user_b_name,
         FIELD_USER_B_PASS => &c.user_b_pass,
+        FIELD_REASON => &c.emergency_reason,
         FIELD_STATUS => &c.status_text,
         _ => return -2147024809i32,
     };
@@ -411,9 +438,10 @@ unsafe extern "system" fn cred_set_string_value(
 
     match field {
         FIELD_USER_A_NAME => c.user_a_name = new_val,
-        FIELD_USER_A_PASS => c.user_a_pass = new_val,
+        FIELD_USER_A_PASS => c.user_a_pass = Zeroizing::new(new_val),
         FIELD_USER_B_NAME => c.user_b_name = new_val,
-        FIELD_USER_B_PASS => c.user_b_pass = new_val,
+        FIELD_USER_B_PASS => c.user_b_pass = Zeroizing::new(new_val),
+        FIELD_REASON => c.emergency_reason = Zeroizing::new(new_val),
         _ => return -2147024809i32,
     }
     0
@@ -441,7 +469,8 @@ unsafe extern "system" fn cred_get_serialization(
     let c = &mut *(this as *mut DualAuthCredentialCom);
 
     crate::provider_com::trace(&format!(
-        "Credential::GetSerialization user_a='{}' user_b='{}'",
+        "Credential::GetSerialization tile={:?} user_a='{}' user_b='{}'",
+        c.tile_type,
         wide_to_string(&c.user_a_name), wide_to_string(&c.user_b_name)
     ));
 
@@ -461,74 +490,155 @@ unsafe extern "system" fn cred_get_serialization(
         return 0;
     }
 
-    // Perform dual-account authentication via named pipe
+    match c.tile_type {
+        TileType::Dual => serialize_dual(c, response, serialization, status_text, status_icon),
+        TileType::Emergency => serialize_emergency(c, response, serialization, status_text, status_icon),
+    }
+}
+
+/// Dual-control tile: verify both accounts with the service, then serialize the
+/// primary account for the actual Windows logon.
+unsafe fn serialize_dual(
+    c: &mut DualAuthCredentialCom,
+    response: *mut u32,
+    serialization: *mut c_void,
+    status_text: *mut *mut u16,
+    status_icon: *mut u32,
+) -> i32 {
     let user_a = wide_to_string(&c.user_a_name);
     let pass_a = wide_to_string(&c.user_a_pass);
     let user_b = wide_to_string(&c.user_b_name);
     let pass_b = wide_to_string(&c.user_b_pass);
 
-    crate::provider_com::trace(&format!(
-        "GetSerialization: pass_a_len={} pass_b_len={}",
-        pass_a.len(), pass_b.len()
-    ));
-
     if user_a.is_empty() || pass_a.is_empty() || user_b.is_empty() || pass_b.is_empty() {
-        crate::provider_com::trace("GetSerialization: empty field, returning NOT_FINISHED");
-        set_status(c, status_text, status_icon, "Please fill in all fields", CPSI_ERROR);
+        set_status(c, status_text, status_icon, "请填写主账号和审批人的完整凭据", CPSI_ERROR);
         *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
         return 0;
     }
 
-    // Send auth request to service via pipe
+    // Send dual-auth request to service via pipe
     use crate::com_types::{AuthRequest, AuthResponse};
-    let request = AuthRequest::new(user_a.clone(), &pass_a, user_b.clone(), &pass_b);
+    let request = AuthRequest::new_dual(&user_a, &pass_a, &user_b, &pass_b);
 
-    crate::provider_com::trace("GetSerialization: connecting to pipe...");
+    crate::provider_com::trace("GetSerialization(dual): connecting to pipe...");
     let auth_result = crate::pipe_client::send_auth_request(&request);
-    crate::provider_com::trace(&format!("GetSerialization: pipe result={:?}", auth_result.is_ok()));
+    crate::provider_com::trace(&format!("GetSerialization(dual): pipe ok={:?}", auth_result.is_ok()));
 
     match auth_result {
         Ok(AuthResponse::Success) => {
             c.auth_success = true;
             c.serialized_user = to_wide(&user_a);
-            c.serialized_pass = to_wide(&pass_a);
-            crate::provider_com::trace(&format!("GetSerialization: AUTH SUCCESS, serializing user='{}'", user_a));
+            c.serialized_pass = Zeroizing::new(to_wide(&pass_a));
+            crate::provider_com::trace("GetSerialization(dual): AUTH SUCCESS");
             fill_serialization(serialization, &user_a, &pass_a);
-            log_serialization_bytes("GetSerialization(success) FINAL struct", serialization);
+            log_serialization_bytes("GetSerialization(dual success) FINAL struct", serialization);
             // IMPORTANT: When returning CREDENTIAL_FINISHED, status_text MUST be NULL
             // and status_icon MUST be CPSI_NONE (0) per Microsoft documentation.
-            // Setting them to non-NULL causes Windows 25H2 LogonUI to reject the serialization.
             set_empty_status(status_text);
             *status_icon = 0; // CPSI_NONE
             *response = CPGSR_RETURN_CREDENTIAL_FINISHED;
-            crate::provider_com::trace(&format!(
-                "GetSerialization: returning response={} (CREDENTIAL_FINISHED), status=NULL", *response
-            ));
+            0
+        }
+        Ok(AuthResponse::Locked { remaining_secs }) => {
+            let mins = (remaining_secs + 59) / 60;
+            set_status(c, status_text, status_icon,
+                &format!("失败次数过多，账号已锁定，请约 {} 分钟后重试", mins), CPSI_ERROR);
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
         Ok(AuthResponse::FailUserA(msg)) => {
-            set_status(c, status_text, status_icon, &format!("User A failed: {}", msg), CPSI_ERROR);
+            set_status(c, status_text, status_icon, &format!("验证失败：{}", msg), CPSI_ERROR);
             *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
         Ok(AuthResponse::FailUserB(msg)) => {
-            set_status(c, status_text, status_icon, &format!("User B failed: {}", msg), CPSI_ERROR);
+            set_status(c, status_text, status_icon, &format!("审批人验证失败：{}", msg), CPSI_ERROR);
             *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
         Ok(AuthResponse::BothFailed(a, b)) => {
-            set_status(c, status_text, status_icon, &format!("Both failed: {} | {}", a, b), CPSI_ERROR);
+            set_status(c, status_text, status_icon, &format!("验证失败：{} | {}", a, b), CPSI_ERROR);
             *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
         Ok(_) => {
-            set_status(c, status_text, status_icon, "Authentication failed", CPSI_ERROR);
+            set_status(c, status_text, status_icon, "身份验证失败", CPSI_ERROR);
             *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
         Err(e) => {
-            crate::provider_com::trace(&format!("GetSerialization: PIPE ERROR: {}", e));
-            set_status(c, status_text, status_icon, &format!("Service error: {}", e), CPSI_ERROR);
+            crate::provider_com::trace(&format!("GetSerialization(dual): PIPE ERROR: {}", e));
+            set_status(c, status_text, status_icon, &format!("认证服务通信失败：{}", e), CPSI_ERROR);
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+            0
+        }
+    }
+}
+
+/// Emergency tile: single authorized account + reason. The service checks the
+/// emergency whitelist/policy and audits the override before we serialize.
+unsafe fn serialize_emergency(
+    c: &mut DualAuthCredentialCom,
+    response: *mut u32,
+    serialization: *mut c_void,
+    status_text: *mut *mut u16,
+    status_icon: *mut u32,
+) -> i32 {
+    let user = wide_to_string(&c.user_a_name);
+    let pass = wide_to_string(&c.user_a_pass);
+    let reason = wide_to_string(&c.emergency_reason);
+
+    if user.is_empty() || pass.is_empty() {
+        set_status(c, status_text, status_icon, "请输入应急账号和密码", CPSI_ERROR);
+        *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+        return 0;
+    }
+    if reason.trim().is_empty() {
+        set_status(c, status_text, status_icon, "请填写应急登录原因", CPSI_ERROR);
+        *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+        return 0;
+    }
+
+    use crate::com_types::{AuthRequest, AuthResponse};
+    let request = AuthRequest::new_emergency(&user, &pass, reason.trim());
+
+    crate::provider_com::trace("GetSerialization(emergency): connecting to pipe...");
+    let auth_result = crate::pipe_client::send_auth_request(&request);
+    crate::provider_com::trace(&format!("GetSerialization(emergency): pipe ok={:?}", auth_result.is_ok()));
+
+    match auth_result {
+        Ok(AuthResponse::Success) => {
+            c.auth_success = true;
+            c.serialized_user = to_wide(&user);
+            c.serialized_pass = Zeroizing::new(to_wide(&pass));
+            crate::provider_com::trace("GetSerialization(emergency): OVERRIDE APPROVED");
+            fill_serialization(serialization, &user, &pass);
+            log_serialization_bytes("GetSerialization(emergency success) FINAL struct", serialization);
+            set_empty_status(status_text);
+            *status_icon = 0;
+            *response = CPGSR_RETURN_CREDENTIAL_FINISHED;
+            0
+        }
+        Ok(AuthResponse::Locked { remaining_secs }) => {
+            let mins = (remaining_secs + 59) / 60;
+            set_status(c, status_text, status_icon,
+                &format!("失败次数过多，账号已锁定，请约 {} 分钟后重试", mins), CPSI_ERROR);
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+            0
+        }
+        Ok(AuthResponse::EmergencyDenied(msg)) => {
+            set_status(c, status_text, status_icon, &format!("应急登录被拒绝：{}", msg), CPSI_ERROR);
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+            0
+        }
+        Ok(_) => {
+            set_status(c, status_text, status_icon, "应急验证失败", CPSI_ERROR);
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+            0
+        }
+        Err(e) => {
+            crate::provider_com::trace(&format!("GetSerialization(emergency): PIPE ERROR: {}", e));
+            set_status(c, status_text, status_icon, &format!("认证服务通信失败：{}", e), CPSI_ERROR);
             *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
@@ -556,7 +666,7 @@ unsafe extern "system" fn cred_report_result(
     if ntstatus < 0 {
         let c = &mut *(this as *mut DualAuthCredentialCom);
         c.auth_success = false;
-        c.serialized_pass = to_wide("");
+        c.serialized_pass = Zeroizing::new(to_wide(""));
         crate::provider_com::trace(
             "ReportResult: logon failed, cleared cached auth_success so fields are re-read on next submit",
         );

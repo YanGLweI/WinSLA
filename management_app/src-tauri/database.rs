@@ -55,6 +55,7 @@ pub struct PolicyConfig {
     pub allow_emergency_override: bool,
     pub emergency_requires_reason: bool,
     pub offline_cache_enabled: bool,
+    pub lockout_duration_minutes: u32,
 }
 
 impl Default for PolicyConfig {
@@ -65,6 +66,7 @@ impl Default for PolicyConfig {
             allow_emergency_override: true,
             emergency_requires_reason: true,
             offline_cache_enabled: true,
+            lockout_duration_minutes: 10,
         }
     }
 }
@@ -406,6 +408,7 @@ impl Database {
                 "allow_emergency_override" => config.allow_emergency_override = value == "true",
                 "emergency_requires_reason" => config.emergency_requires_reason = value == "true",
                 "offline_cache_enabled" => config.offline_cache_enabled = value == "true",
+                "lockout_duration_minutes" => config.lockout_duration_minutes = value.parse().unwrap_or(10),
                 _ => {}
             }
         }
@@ -421,6 +424,7 @@ impl Database {
             ("allow_emergency_override", config.allow_emergency_override.to_string()),
             ("emergency_requires_reason", config.emergency_requires_reason.to_string()),
             ("offline_cache_enabled", config.offline_cache_enabled.to_string()),
+            ("lockout_duration_minutes", config.lockout_duration_minutes.to_string()),
         ];
 
         for (key, value) in entries {
@@ -500,6 +504,7 @@ mod tests {
             allow_emergency_override: false,
             emergency_requires_reason: true,
             offline_cache_enabled: false,
+            lockout_duration_minutes: 15,
         };
         db.save_policy(&config).unwrap();
 
@@ -508,6 +513,7 @@ mod tests {
         assert_eq!(loaded.auth_timeout_secs, 60);
         assert!(!loaded.allow_emergency_override);
         assert!(!loaded.offline_cache_enabled);
+        assert_eq!(loaded.lockout_duration_minutes, 15);
     }
 
     #[test]

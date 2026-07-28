@@ -1,6 +1,6 @@
 [package]
 name = "winsla-service"
-version = "2.0.7"
+version = "2.0.9"
 edition = "2021"
 authors = ["ylw"]
 description = "Windows Service for dual-account authentication bridge"
@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 # Workspace dependencies
 tokio.workspace = true
+windows.workspace = true
 windows-service.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -50,6 +50,7 @@ export interface PolicyConfig {
   allow_emergency_override: boolean
   emergency_requires_reason: boolean
   offline_cache_enabled: boolean
+  lockout_duration_minutes: number
 }
 
 export interface ServiceActionResult {

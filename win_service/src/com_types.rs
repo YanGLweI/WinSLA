@@ -3,63 +3,85 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Authentication mode requested by the Credential Provider
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthMode {
+    /// Dual control login: primary account + approver
+    Dual,
+    /// Emergency override login: single authorized account with a reason
+    Emergency,
+}
+
 /// Request sent from CP to Service via Named Pipe
+///
+/// Passwords travel as plaintext over the local named pipe. Both endpoints run
+/// as SYSTEM on the same machine (LogonUI hosts the CP; the service runs as
+/// LocalSystem), so this does not expose credentials beyond the trust boundary
+/// Windows already uses for interactive logon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRequest {
     pub request_id: Uuid,
+    pub mode: AuthMode,
+    /// Dual: primary account username; Emergency: emergency account username
     pub user_a_username: String,
-    pub user_a_password_hash: Vec<u8>,
+    /// Plaintext password for user_a
+    pub user_a_password: String,
+    /// Dual: approver username; Emergency: empty
     pub user_b_username: String,
-    pub user_b_password_hash: Vec<u8>,
+    /// Dual: approver plaintext password; Emergency: empty
+    pub user_b_password: String,
+    /// Emergency: reason for override; Dual: empty
+    pub reason: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 impl AuthRequest {
-    /// Create a new auth request with HMAC-protected passwords
-    pub fn new(
+    /// Create a dual-control authentication request
+    pub fn new_dual(
         user_a_username: &str,
         user_a_password: &str,
         user_b_username: &str,
         user_b_password: &str,
     ) -> Self {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        
-        // Generate deterministic salt based on usernames (for demo)
-        // In production, use unique random salt per connection
-        let salt = format!("{}-{}", user_a_username, user_b_username);
-        
-        let mut hasher = DefaultHasher::new();
-        salt.hash(&mut hasher);
-        
         AuthRequest {
             request_id: Uuid::new_v4(),
+            mode: AuthMode::Dual,
             user_a_username: user_a_username.to_lowercase(),
-            user_a_password_hash: hash_password(user_a_password, &salt),
+            user_a_password: user_a_password.to_string(),
             user_b_username: user_b_username.to_lowercase(),
-            user_b_password_hash: hash_password(user_b_password, &salt),
+            user_b_password: user_b_password.to_string(),
+            reason: String::new(),
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    /// Create an emergency override authentication request
+    pub fn new_emergency(username: &str, password: &str, reason: &str) -> Self {
+        AuthRequest {
+            request_id: Uuid::new_v4(),
+            mode: AuthMode::Emergency,
+            user_a_username: username.to_lowercase(),
+            user_a_password: password.to_string(),
+            user_b_username: String::new(),
+            user_b_password: String::new(),
+            reason: reason.to_string(),
             timestamp: chrono::Utc::now(),
         }
     }
 }
 
-/// Password hashing for secure transmission
-fn hash_password(password: &str, salt: &str) -> Vec<u8> {
-    use sha2::{Sha256, Digest};
-    
-    let mut hasher = Sha256::new();
-    hasher.update(salt.as_bytes());
-    hasher.update(password.as_bytes());
-    hasher.finalize().to_vec()
-}
-
 /// Response sent from Service back to CP
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuthResponse {
+    /// Dual auth succeeded OR emergency override approved
     Success,
-    FailUserA(String),      // Error message for User A failure
-    FailUserB(String),      // Error message for User B failure  
+    FailUserA(String),      // Error message for primary account failure
+    FailUserB(String),      // Error message for approver failure
     BothFailed(String, String),
+    /// Account locked out after too many failed attempts
+    Locked { remaining_secs: u64 },
+    /// Emergency override denied (policy disabled / not authorized / missing reason)
+    EmergencyDenied(String),
     Timeout,
     NetworkUnavailable,
 }

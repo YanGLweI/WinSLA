@@ -3,63 +3,87 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Authentication mode requested by the Credential Provider
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthMode {
+    /// Dual control login: primary account + approver
+    Dual,
+    /// Emergency override login: single authorized account with a reason
+    Emergency,
+}
+
 /// Request sent from CP to Service via Named Pipe
+///
+/// Passwords travel as plaintext over the local named pipe. Both endpoints run
+/// as SYSTEM on the same machine (LogonUI hosts the CP; the service runs as
+/// LocalSystem), so this does not expose credentials beyond the trust boundary
+/// Windows already uses for interactive logon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRequest {
     pub request_id: Uuid,
+    pub mode: AuthMode,
+    /// Dual: primary account username; Emergency: emergency account username
     pub user_a_username: String,
-    pub user_a_password_hash: Vec<u8>, // Encrypted or secured
+    /// Plaintext password for user_a
+    pub user_a_password: String,
+    /// Dual: approver username; Emergency: empty
     pub user_b_username: String,
-    pub user_b_password_hash: Vec<u8>,
+    /// Dual: approver plaintext password; Emergency: empty
+    pub user_b_password: String,
+    /// Emergency: reason for override; Dual: empty
+    pub reason: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 /// Response sent from Service back to CP
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuthResponse {
+    /// Dual auth succeeded OR emergency override approved
     Success,
-    FailUserA(String),      // Error message for User A failure
-    FailUserB(String),      // Error message for User B failure
+    FailUserA(String),      // Error message for primary account failure
+    FailUserB(String),      // Error message for approver failure
     BothFailed(String, String),
+    /// Account locked out after too many failed attempts
+    Locked { remaining_secs: u64 },
+    /// Emergency override denied (policy disabled / not authorized / missing reason)
+    EmergencyDenied(String),
     Timeout,
     NetworkUnavailable,
 }
 
 impl AuthRequest {
-    pub fn new(
-        user_a_username: String,
+    /// Create a dual-control authentication request
+    pub fn new_dual(
+        user_a_username: &str,
         user_a_password: &str,
-        user_b_username: String,
+        user_b_username: &str,
         user_b_password: &str,
     ) -> Self {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::Hash;
-        
-        let mut hasher = DefaultHasher::new();
-        format!("{}-{}", user_a_username, user_b_username).hash(&mut hasher);
-        
-        // In production, encrypt passwords before transmission
-        let password_encryption_key = b"dev-salt-for-demo-only"; // REMOVE IN PRODUCTION
-        
         AuthRequest {
             request_id: Uuid::new_v4(),
-            user_a_username,
-            user_a_password_hash: sha256_password(user_a_password, password_encryption_key),
-            user_b_username,
-            user_b_password_hash: sha256_password(user_b_password, password_encryption_key),
+            mode: AuthMode::Dual,
+            user_a_username: user_a_username.to_lowercase(),
+            user_a_password: user_a_password.to_string(),
+            user_b_username: user_b_username.to_lowercase(),
+            user_b_password: user_b_password.to_string(),
+            reason: String::new(),
             timestamp: chrono::Utc::now(),
         }
     }
-}
 
-fn sha256_password(password: &str, salt: &[u8]) -> Vec<u8> {
-    use sha2::Sha256;
-    use hmac::{Hmac, Mac};
-    
-    type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(salt).expect("Failed to create HMAC");
-    mac.update(password.as_bytes());
-    mac.finalize().into_bytes().to_vec()
+    /// Create an emergency override authentication request
+    pub fn new_emergency(username: &str, password: &str, reason: &str) -> Self {
+        AuthRequest {
+            request_id: Uuid::new_v4(),
+            mode: AuthMode::Emergency,
+            user_a_username: username.to_lowercase(),
+            user_a_password: password.to_string(),
+            user_b_username: String::new(),
+            user_b_password: String::new(),
+            reason: reason.to_string(),
+            timestamp: chrono::Utc::now(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

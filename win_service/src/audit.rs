@@ -130,6 +130,9 @@ impl AuditDb {
 
         // Enable WAL for concurrent read/write from service + management app
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        
+        // Busy timeout: 5s for concurrent access safety (prevents "database is locked")
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
 
         // Create audit_log table if it doesn't exist (same schema as management app)
         conn.execute_batch(
@@ -143,6 +146,15 @@ impl AuditDb {
                 client_hostname TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);",
+        )?;
+
+        // Login attempt tracking table for the retry/lockout policy
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS login_attempts (
+                account TEXT PRIMARY KEY,
+                fail_count INTEGER NOT NULL DEFAULT 0,
+                locked_until TEXT
+            );",
         )?;
 
         // Migration: rename old columns if upgrading from v2.0.4
@@ -222,5 +234,148 @@ impl AuditDb {
         })?;
 
         pairs.collect()
+    }
+
+    /// Read the policy configuration written by the management app.
+    /// Falls back to defaults for any key that is missing or unreadable.
+    pub fn get_policy(&self) -> ServicePolicy {
+        let mut policy = ServicePolicy::default();
+        if let Ok(mut stmt) = self.conn.prepare("SELECT key, value FROM policy_config") {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }) {
+                for row in rows.flatten() {
+                    match row.0.as_str() {
+                        "max_retry_count" => policy.max_retry_count = row.1.parse().unwrap_or(3),
+                        "auth_timeout_secs" => policy.auth_timeout_secs = row.1.parse().unwrap_or(30),
+                        "allow_emergency_override" => policy.allow_emergency_override = row.1 == "true",
+                        "emergency_requires_reason" => policy.emergency_requires_reason = row.1 == "true",
+                        "offline_cache_enabled" => policy.offline_cache_enabled = row.1 == "true",
+                        "lockout_duration_minutes" => policy.lockout_duration_minutes = row.1.parse().unwrap_or(10),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        policy
+    }
+
+    /// Get all currently active emergency accounts as (sid, username) pairs.
+    /// Accounts with a past expires_at are excluded; NULL expires_at never expires.
+    pub fn get_emergency_accounts(&self) -> Vec<(String, String)> {
+        let mut accounts = Vec::new();
+        if let Ok(mut stmt) = self.conn.prepare(
+            "SELECT sid, username FROM emergency_accounts
+             WHERE expires_at IS NULL OR expires_at > datetime('now', 'localtime')",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }) {
+                accounts.extend(rows.flatten());
+            }
+        }
+        accounts
+    }
+
+    /// If the account is currently locked out, return the remaining lock time in seconds.
+    pub fn get_lock_remaining_secs(&self, account: &str) -> Option<u64> {
+        let locked_until: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT locked_until FROM login_attempts WHERE account = ?1",
+                params![account.to_lowercase()],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+
+        let locked_until = locked_until?;
+        let until = chrono::NaiveDateTime::parse_from_str(&locked_until, "%Y-%m-%d %H:%M:%S").ok()?;
+        let now = chrono::Local::now().naive_local();
+        if until > now {
+            Some((until - now).num_seconds().max(1) as u64)
+        } else {
+            None
+        }
+    }
+
+    /// Record a failed login attempt against the policy. When the failure count
+    /// reaches max_retry_count the account is locked for lockout_duration_minutes
+    /// and the counter restarts after the lock expires.
+    ///
+    /// Thread-safe: uses SQLite ON CONFLICT atomics; busy_timeout(5s) guards concurrent access.
+    /// Returns (remaining_attempts_before_lock, Some(locked_secs) if this failure
+    /// triggered a new lockout).
+    pub fn record_login_failure(
+        &self,
+        account: &str,
+        max_retry_count: u32,
+        lockout_duration_minutes: u32,
+    ) -> (u32, Option<u64>) {
+        let account = account.to_lowercase();
+        let current: u32 = self
+            .conn
+            .query_row(
+                "SELECT fail_count FROM login_attempts WHERE account = ?1",
+                params![&account],
+                |row| row.get::<_, u32>(0),
+            )
+            .unwrap_or(0);
+
+        let new_count = current + 1;
+
+        if new_count >= max_retry_count {
+            let locked_until = (chrono::Local::now()
+                + chrono::Duration::minutes(lockout_duration_minutes as i64))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+            let rows = self.conn.execute(
+                "INSERT INTO login_attempts (account, fail_count, locked_until) VALUES (?1, 0, ?2)
+                 ON CONFLICT(account) DO UPDATE SET fail_count = 0, locked_until = ?2",
+                params![&account, &locked_until],
+            ).unwrap_or(0);
+            log::warn!("Account '{}' locked after {} failures ({} rows updated)", account, new_count, rows);
+            (0, Some(lockout_duration_minutes as u64 * 60))
+        } else {
+            let rows = self.conn.execute(
+                "INSERT INTO login_attempts (account, fail_count, locked_until) VALUES (?1, ?2, NULL)
+                 ON CONFLICT(account) DO UPDATE SET fail_count = ?2, locked_until = NULL",
+                params![&account, new_count],
+            ).unwrap_or(0);
+            log::debug!("Account '{}' failure recorded: {} total ({} rows updated)", account, new_count, rows);
+            (max_retry_count - new_count, None)
+        }
+    }
+
+    /// Clear the failure counter for an account (called after a successful login).
+    pub fn reset_login_failures(&self, account: &str) {
+        let _ = self.conn.execute(
+            "DELETE FROM login_attempts WHERE account = ?1",
+            params![account.to_lowercase()],
+        );
+    }
+}
+
+/// Service-side view of the policy_config table written by the management app.
+#[derive(Debug, Clone)]
+pub struct ServicePolicy {
+    pub max_retry_count: u32,
+    pub auth_timeout_secs: u64,
+    pub allow_emergency_override: bool,
+    pub emergency_requires_reason: bool,
+    pub offline_cache_enabled: bool,
+    pub lockout_duration_minutes: u32,
+}
+
+impl Default for ServicePolicy {
+    fn default() -> Self {
+        Self {
+            max_retry_count: 3,
+            auth_timeout_secs: 30,
+            allow_emergency_override: true,
+            emergency_requires_reason: true,
+            offline_cache_enabled: true,
+            lockout_duration_minutes: 10,
+        }
     }
 }
