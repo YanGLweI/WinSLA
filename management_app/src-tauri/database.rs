@@ -411,6 +411,7 @@ impl Database {
                 "emergency_requires_reason" => config.emergency_requires_reason = value == "true",
                 "offline_cache_enabled" => config.offline_cache_enabled = value == "true",
                 "lockout_duration_minutes" => config.lockout_duration_minutes = value.parse().unwrap_or(10),
+                "default_tile_enabled" => config.default_tile_enabled = value == "true",
                 _ => {}
             }
         }
@@ -427,6 +428,7 @@ impl Database {
             ("emergency_requires_reason", config.emergency_requires_reason.to_string()),
             ("offline_cache_enabled", config.offline_cache_enabled.to_string()),
             ("lockout_duration_minutes", config.lockout_duration_minutes.to_string()),
+            ("default_tile_enabled", config.default_tile_enabled.to_string()),
         ];
 
         for (key, value) in entries {

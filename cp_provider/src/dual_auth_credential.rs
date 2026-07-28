@@ -15,6 +15,15 @@ pub const CLSID_DUAL_AUTH_PROVIDER: GUID = GUID {
     data4: [0x9E, 0x5F, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F],
 };
 
+/// Credential Provider Filter CLSID (separate registration)
+/// {E4D9F6E8-8A2B-4C3D-9E5F-1A2B3C4D5E6F}
+pub const CLSID_WINSLA_FILTER: GUID = GUID {
+    data1: 0xE4D9F6E8,
+    data2: 0x8A2B,
+    data3: 0x4C3D,
+    data4: [0x9E, 0x5F, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F],
+};
+
 /// Number of credentials this provider supplies (always 1 for dual auth)
 pub const CREDENTIAL_COUNT: u32 = 1;
 

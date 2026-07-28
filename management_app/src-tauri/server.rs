@@ -162,9 +162,87 @@ async fn get_policy(State(db): State<AppState>) -> impl IntoResponse {
 async fn update_policy(State(db): State<AppState>, Json(config): Json<crate::database::PolicyConfig>) -> impl IntoResponse {
     let db = db.lock().unwrap();
     match db.save_policy(&config) {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Ok(_) => {
+            // 同时写入注册表，确保策略立即生效
+            #[cfg(windows)]
+            {
+                if let Err(e) = write_policy_to_registry(&config) {
+                    eprintln!("Warning: Failed to write policy to registry: {}", e);
+                    // 不返回错误，因为数据库已保存成功
+                }
+            }
+            StatusCode::NO_CONTENT.into_response()
+        },
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+}
+
+/// 将策略写入 Windows 注册表
+#[cfg(windows)]
+fn write_policy_to_registry(config: &crate::database::PolicyConfig) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY_LOCAL_MACHINE, HKEY, 
+        REG_SAM_FLAGS, REG_VALUE_TYPE, REG_OPTION_NON_VOLATILE
+    };
+    
+    let key_path = OsStr::new(r"SOFTWARE\WinSLA\Policy")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+    
+    let mut hkey = HKEY(std::ptr::null_mut());
+    
+    // 创建或打开注册表键
+    let result = unsafe {
+        RegCreateKeyExW(
+            HKEY_LOCAL_MACHINE,
+            windows::core::PCWSTR(key_path.as_ptr()),
+            0,
+            windows::core::PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            REG_SAM_FLAGS(0x0002), // KEY_WRITE
+            None,
+            &mut hkey,
+            None, // disposition (可选)
+        )
+    };
+    
+    if result != ERROR_SUCCESS {
+        let err_msg = format!("RegCreateKeyExW failed: {:?} (error code: {})", result, result.0);
+        eprintln!("{}", err_msg);
+        return Err(err_msg);
+    }
+    
+    // 写入 DefaultTileEnabled 值
+    let value_name = OsStr::new("DefaultTileEnabled")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+    let value_data: [u8; 4] = (if config.default_tile_enabled { 1u32 } else { 0u32 }).to_le_bytes();
+    
+    let result2 = unsafe {
+        RegSetValueExW(
+            hkey,
+            windows::core::PCWSTR(value_name.as_ptr()),
+            0,
+            REG_VALUE_TYPE(4), // REG_DWORD
+            Some(&value_data),
+        )
+    };
+    
+    unsafe { let _ = RegCloseKey(hkey); }
+    
+    if result2 != ERROR_SUCCESS {
+        let err_msg = format!("RegSetValueExW failed: {:?} (error code: {})", result2, result2.0);
+        eprintln!("{}", err_msg);
+        return Err(err_msg);
+    }
+    
+    eprintln!("Successfully wrote DefaultTileEnabled={} to registry", config.default_tile_enabled);
+    Ok(())
 }
 
 // ─── Service Control ─────────────────────────────────────────────

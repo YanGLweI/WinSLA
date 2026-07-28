@@ -143,7 +143,7 @@ pub struct FilterVTable {
     pub query_interface: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32,
     pub add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
     pub release: unsafe extern "system" fn(*mut c_void) -> u32,
-    pub filter: unsafe extern "system" fn(*mut c_void, u32, u32, *mut *mut c_void, u32, *mut i32) -> i32,
+    pub filter: unsafe extern "system" fn(*mut c_void, u32, u32, *const GUID, *mut i32, u32) -> i32,
     pub update_remote_credential: unsafe extern "system" fn(*mut c_void, u32) -> i32,
 }
 
@@ -574,22 +574,32 @@ unsafe extern "system" fn filter_filter(
     this: *mut c_void,
     cpus: u32,
     _dwflags: u32,
-    rgpproviders: *mut *mut c_void,
-    cproviders: u32,
+    rgclsid_providers: *const GUID,
     rgballow: *mut i32,
+    cproviders: u32,
 ) -> i32 {
-    trace(&format!("Filter::Filter cpus={} providers={}", cpus, cproviders));
+    trace(&format!("Filter::Filter cpus={} cProviders={}", cpus, cproviders));
     
-    // Only apply to LOGON/UNLOCK scenarios
+    // Only handle LOGON and UNLOCK_WORKSTATION scenarios
     if cpus != CPUS_LOGON && cpus != CPUS_UNLOCK_WORKSTATION {
-        return -2147467263i32; // E_NOTIMPL - Don't interfere with other scenarios
+        trace("Filter::Filter -> E_NOTIMPL (not logon/unlock scenario)");
+        return -2147467263i32; // E_NOTIMPL
     }
     
     // Read registry policy: if default_tile_enabled=true, don't filter anything
     let hide_others = match read_registry_default_tile_enabled() {
-        Ok(Some(true)) => false,   // Policy allows default Tile → show everything
-        Ok(Some(false)) => true,   // Policy disables default Tile → filter non-WinSLA
-        _ => false,                 // Fail-open: can't read → show everything
+        Ok(Some(true)) => {
+            trace("Filter::Filter policy=enabled, allow all");
+            false
+        },
+        Ok(Some(false)) => {
+            trace("Filter::Filter policy=disabled, hide others");
+            true
+        },
+        _ => {
+            trace("Filter::Filter policy read failed, allow all (fail-open)");
+            false
+        }
     };
     
     if !hide_others {
@@ -597,44 +607,29 @@ unsafe extern "system" fn filter_filter(
         for i in 0..cproviders {
             *rgballow.add(i as usize) = 1; // TRUE
         }
-        trace("Filter: no filtering enabled");
         return 0; // S_OK
     }
     
-    // Filtering is enabled - mark ourselves as allowed, others as disallowed
-    // Self-identification: QI IID_WINSLA_PRIVATE_ID on each provider pointer
-    let stub = &*(this as *const FilterStub);
-    let own_ptr = stub.owner as *const c_void;
-    let guid_private = IID_WINSLA_PRIVATE_ID;
+    // Filtering is enabled - only allow our own CLSID (E4D9F6E7-8A2B-4C3D-9E5F-1A2B3C4D5E6F)
+    const CLSID_DUAL_AUTH_PROVIDER: GUID = GUID {
+        data1: 0xE4D9F6E7,
+        data2: 0x8A2B,
+        data3: 0x4C3D,
+        data4: [0x9E, 0x5F, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F],
+    };
     
     for i in 0..cproviders {
-        let punknown = *rgpproviders.add(i as usize);
+        let clsid = &*rgclsid_providers.add(i as usize);
+        let is_self = clsid.data1 == CLSID_DUAL_AUTH_PROVIDER.data1
+            && clsid.data2 == CLSID_DUAL_AUTH_PROVIDER.data2
+            && clsid.data3 == CLSID_DUAL_AUTH_PROVIDER.data3
+            && clsid.data4 == CLSID_DUAL_AUTH_PROVIDER.data4;
         
-        // Try to QI our private ID
-        let mut ppv = std::ptr::null_mut();
-        let mut found_ourselves = false;
-        
-        // We know the owner implements IID_WINSLA_PRIVATE_ID
-        // Try QueryInterface on the passed-in provider pointer
-        let qitbl = *(punknown as *const *const c_void);
-        let qi_fn = *(qitbl as *const fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32);
-        
-        let hr = unsafe { qi_fn(punknown, &guid_private, &mut ppv) };
-        
-        if hr == 0 && !ppv.is_null() {
-            // Successfully identified as our own CP
-            found_ourselves = true;
-            // Free the returned pointer
-            let freetbl = *(punknown as *const *const c_void);
-            let relfn = *(freetbl as *const fn(*mut c_void) -> u32);
-            unsafe { relfn(ppv); }
-        }
-        
-        // Allow only if it's our own provider
-        *rgballow.add(i as usize) = if found_ourselves { 1 } else { 0 };
+        *rgballow.add(i as usize) = if is_self { 1 } else { 0 };
+        trace(&format!("Filter::Filter provider[{}] clsid={:08X} allow={}", 
+            i, clsid.data1, if is_self { 1 } else { 0 }));
     }
     
-    trace("Filter: applied restrictive mode (WinSLA-only)");
     0 // S_OK
 }
 

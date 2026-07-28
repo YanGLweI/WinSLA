@@ -20,6 +20,7 @@ use windows::core::GUID;
 
 // Re-export key types
 pub use dual_auth_credential::CLSID_DUAL_AUTH_PROVIDER;
+pub use dual_auth_credential::CLSID_WINSLA_FILTER;
 pub use dual_auth_credential::{DualAuthCredential, DualAuthProvider};
 
 /// DLL Entry Point
@@ -54,8 +55,11 @@ pub extern "system" fn DllGetClassObject(
 
         let clsid = &*(rclsid as *const GUID);
 
-        // Check if the requested CLSID matches our provider
-        if *clsid != CLSID_DUAL_AUTH_PROVIDER {
+        // Check if the requested CLSID matches our provider or filter
+        let is_provider = *clsid == CLSID_DUAL_AUTH_PROVIDER;
+        let is_filter = *clsid == CLSID_WINSLA_FILTER;
+        
+        if !is_provider && !is_filter {
             *ppv = std::ptr::null_mut();
             return -2147467262i32; // CLASS_E_CLASSNOTAVAILABLE
         }
