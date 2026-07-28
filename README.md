@@ -376,6 +376,5 @@ cargo test -p ad-bridge
 
 ## 致谢
 
-- 灵感来源：安当 SLA、ESET Secure Authentication
 - 技术参考：Microsoft Credential Provider Samples (Windows SDK)
 - 依赖：[windows-rs](https://github.com/microsoft/windows-rs)、[tokio](https://tokio.rs)、[axum](https://github.com/tokio-rs/axum)、[wry](https://github.com/tauri-apps/wry)
