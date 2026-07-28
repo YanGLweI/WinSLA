@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getPairs, addPair, deletePair, validateAccount as validateAccountApi, type DualPair } from '../api'
+import { getPairs, addPair, deletePair, validateAccount as validateAccountApi, type DualPair, type AddPairResponse } from '../api'
 
 const pairs = ref<DualPair[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
+
+const router = useRouter()
 
 const form = ref({
   account_username: '', 
@@ -77,16 +80,35 @@ async function handleAdd() {
     return
   }
   try {
-    await addPair({
+    const response = await addPair({
       account_sid: form.value.account_sid,
       approver_sid: form.value.approver_sid,
       account_username: form.value.account_username,
       approver_username: form.value.approver_username,
     })
+    
+    const result = response.data as AddPairResponse
+    
     ElMessage.success('主账号与审批人关联已建立')
     dialogVisible.value = false
     resetForm()
     load()
+    
+    // 如果是第一条配对且无应急账号，弹出引导提示
+    if (result.should_configure_emergency) {
+      ElMessageBox.confirm(
+        '已自动禁用 Windows 默认登录 Tile，为保障极端情况下仍可访问系统，强烈建议配置应急账号。\n\n确定前往应急账号配置页面吗？',
+        '配置应急账号提醒',
+        {
+          confirmButtonText: '立即配置',
+          cancelButtonText: '稍后处理',
+          type: 'warning'
+        }
+      ).then(() => {
+        // 切换到应急账号 Tab（假设路由支持）
+        router.push({ name: 'Emergency' })
+      }).catch(() => {})
+    }
   } catch (e: any) { ElMessage.error('添加失败：' + e.message) }
 }
 

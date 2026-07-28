@@ -109,10 +109,10 @@ onMounted(load)
     <el-dialog v-model="dialogVisible" title="新增应急账号" width="420px" :close-on-click-modal="false" @closed="resetForm">
       <el-form label-width="70px" size="small">
         <el-form-item label="用户名">
-          <el-input v-model="form.username" placeholder="DOMAIN\admin 或 admin@domain.com" :disabled="validated" />
+          <el-input v-model="form.username" placeholder="DOMAIN\admin 或 admin@domain.com" :disabled="validated" @keydown.enter="doValidate" />
         </el-form-item>
         <el-form-item label="密码">
-          <el-input v-model="form.password" type="password" show-password placeholder="域账号密码" :disabled="validated" />
+          <el-input v-model="form.password" type="password" show-password placeholder="域账号密码" :disabled="validated" @keydown.enter="doValidate" />
         </el-form-item>
         <el-form-item>
           <el-button v-if="!validated" type="primary" size="small" :loading="validating" @click="doValidate">验证账号</el-button>

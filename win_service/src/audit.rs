@@ -246,7 +246,7 @@ impl AuditDb {
             }) {
                 for row in rows.flatten() {
                     match row.0.as_str() {
-                        "max_retry_count" => policy.max_retry_count = row.1.parse().unwrap_or(3),
+                        "max_retry_count" => policy.max_retry_count = row.1.parse().unwrap_or(5),
                         "auth_timeout_secs" => policy.auth_timeout_secs = row.1.parse().unwrap_or(30),
                         "allow_emergency_override" => policy.allow_emergency_override = row.1 == "true",
                         "emergency_requires_reason" => policy.emergency_requires_reason = row.1 == "true",
@@ -366,19 +366,19 @@ pub struct ServicePolicy {
     pub emergency_requires_reason: bool,
     pub offline_cache_enabled: bool,
     pub lockout_duration_minutes: u32,
-    pub default_tile_enabled: bool,  // 是否启用 Windows 默认登录 Tile（默认 false = WinSLA 独占）
+    pub default_tile_enabled: bool,  // 是否启用 Windows 默认登录 Tile（默认 true = 保障未配置配对时可登录）
 }
 
 impl Default for ServicePolicy {
     fn default() -> Self {
         Self {
-            max_retry_count: 3,
+            max_retry_count: 5,
             auth_timeout_secs: 30,
             allow_emergency_override: true,
             emergency_requires_reason: true,
             offline_cache_enabled: true,
             lockout_duration_minutes: 10,
-            default_tile_enabled: false,  // 安装后默认关闭默认 Tile，强制使用 WinSLA
+            default_tile_enabled: true,  // 默认启用默认 Tile，与管理端 PolicyConfig 默认值保持一致
         }
     }
 }

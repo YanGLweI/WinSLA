@@ -62,13 +62,13 @@ pub struct PolicyConfig {
 impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
-            max_retry_count: 3,
+            max_retry_count: 5,
             auth_timeout_secs: 30,
             allow_emergency_override: true,
             emergency_requires_reason: true,
             offline_cache_enabled: true,
             lockout_duration_minutes: 10,
-            default_tile_enabled: false,  // 安装后默认关闭默认 Tile，强制使用 WinSLA
+            default_tile_enabled: true,   // 安装后默认启用默认 Tile，保障未配置配对时可登录
         }
     }
 }
@@ -405,7 +405,7 @@ impl Database {
         for row in rows {
             let (key, value) = row?;
             match key.as_str() {
-                "max_retry_count" => config.max_retry_count = value.parse().unwrap_or(3),
+                "max_retry_count" => config.max_retry_count = value.parse().unwrap_or(5),
                 "auth_timeout_secs" => config.auth_timeout_secs = value.parse().unwrap_or(30),
                 "allow_emergency_override" => config.allow_emergency_override = value == "true",
                 "emergency_requires_reason" => config.emergency_requires_reason = value == "true",

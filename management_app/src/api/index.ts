@@ -24,6 +24,13 @@ export interface DualPair {
   updated_at: string
 }
 
+export interface AddPairResponse {
+  pair: DualPair
+  auto_disabled_default_tile: boolean   // 是否自动禁用了默认 Tile
+  has_emergency_accounts: boolean       // 是否已有应急账号
+  should_configure_emergency: boolean   // 是否应提示配置应急账号
+}
+
 export interface EmergencyAccount {
   id: string
   sid: string

@@ -86,17 +86,90 @@ struct AddPairRequest {
 }
 
 async fn add_pair(State(db): State<AppState>, Json(req): Json<AddPairRequest>) -> impl IntoResponse {
+    use serde_json::json;
+    
     let db = db.lock().unwrap();
-    match db.add_dual_pair(&req.account_sid, &req.approver_sid, &req.account_username, &req.approver_username) {
-        Ok(pair) => (StatusCode::CREATED, Json(pair)).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    
+    // 检查是否为第一条配对
+    let existing_pairs = match db.get_all_dual_pairs() {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    
+    // 添加新配对
+    let new_pair = match db.add_dual_pair(&req.account_sid, &req.approver_sid, &req.account_username, &req.approver_username) {
+        Ok(pair) => pair,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    
+    // 如果这是第一条配对，自动禁用默认 Tile
+    let auto_disabled_default_tile = existing_pairs.is_empty();
+    let mut policy_config = db.get_policy().unwrap_or_default();
+    
+    if auto_disabled_default_tile && policy_config.default_tile_enabled {
+        // 自动设置为禁用并保存到 DB
+        policy_config.default_tile_enabled = false;
+        if let Err(e) = db.save_policy(&policy_config) {
+            log::warn!("Failed to save policy after adding first pair: {}", e);
+        }
     }
+    
+    // 获取应急账号数量
+    let has_emergency_accounts = db.get_emergency_accounts().map(|acc| !acc.is_empty()).unwrap_or(false);
+    
+    drop(db);
+    
+    // 立即更新注册表
+    #[cfg(windows)]
+    if auto_disabled_default_tile && !policy_config.default_tile_enabled {
+        if let Err(e) = write_policy_to_registry(&policy_config) {
+            eprintln!("Warning: Failed to update registry when adding first pair: {}", e);
+        }
+    }
+    
+    // 构建响应，携带附加信息供前端决策
+    (StatusCode::CREATED, Json(json!({
+        "pair": new_pair,
+        "auto_disabled_default_tile": auto_disabled_default_tile,
+        "has_emergency_accounts": has_emergency_accounts,
+        "should_configure_emergency": auto_disabled_default_tile && !has_emergency_accounts
+    }))).into_response()
 }
 
 async fn delete_pair(State(db): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let db = db.lock().unwrap();
+    
+    // 先检查是否有其他配对
+    let existing_pairs = match db.get_all_dual_pairs() {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    
+    // 计算剩余配对数（排除当前要删除的）
+    let remaining_pairs: Vec<_> = existing_pairs.iter().filter(|p| p.id != id.as_str()).collect();
+    
+    // 删除配对
     match db.remove_dual_pair(&id) {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Ok(_) => {
+            // 如果删除后剩余 0 条配对，且当前已禁用默认 Tile，则自动恢复
+            if remaining_pairs.is_empty() {
+                let mut policy_config = db.get_policy().unwrap_or_default();
+                if !policy_config.default_tile_enabled {
+                    policy_config.default_tile_enabled = true;
+                    let _ = db.save_policy(&policy_config);
+                    
+                    drop(db);
+                    
+                    // 更新注册表
+                    #[cfg(windows)]
+                    if let Err(e) = write_policy_to_registry(&policy_config) {
+                        eprintln!("Warning: Failed to restore registry when removing last pair: {}", e);
+                    }
+                }
+            }
+            
+            StatusCode::NO_CONTENT.into_response()
+        },
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

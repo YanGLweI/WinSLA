@@ -1,5 +1,5 @@
 ﻿; WinSLA - Windows Dual-Account Authentication System
-; NSIS Installer Script v2.1.0
+; NSIS Installer Script v2.1.4
 ; Fixed: Audit log table field names (account_sid/approver_sid) and UI terminology update
 
 !include "MUI2.nsh"
@@ -7,17 +7,17 @@
 !include "x64.nsh"
 
 ; ─── 基本信息 ───────────────────────────────────────────────
-Name "WinSLA v2.1.0"
-OutFile "WinSLA-v2.1.0-Setup.exe"
+Name "WinSLA v2.1.4"
+OutFile "WinSLA-v2.1.4-Setup.exe"
 InstallDir "$PROGRAMFILES64\WinSLA"
 InstallDirRegKey HKLM "Software\WinSLA" "InstallDir"
 RequestExecutionLevel admin
 Unicode true
 
 ; ─── 版本信息 ───────────────────────────────────────────────
-VIProductVersion "2.1.0.0"
+VIProductVersion "2.1.4.0"
 VIAddVersionKey "ProductName" "WinSLA"
-VIAddVersionKey "FileVersion" "2.1.0"
+VIAddVersionKey "FileVersion" "2.1.4"
 VIAddVersionKey "FileDescription" "WinSLA - Windows Dual-Account Authentication System"
 VIAddVersionKey "LegalCopyright" "MIT License - 2026 ylw"
 
@@ -71,7 +71,7 @@ Section "Core Files" SecCore
 
     ; 写入安装路径到注册表
     WriteRegStr HKLM "Software\WinSLA" "InstallDir" "$INSTDIR"
-    WriteRegStr HKLM "Software\WinSLA" "Version" "2.1.0"
+    WriteRegStr HKLM "Software\WinSLA" "Version" "2.1.4"
 
     ; 创建卸载程序
     WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -80,7 +80,7 @@ Section "Core Files" SecCore
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "UninstallString" "$INSTDIR\uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \\
-        "DisplayVersion" "2.1.0"
+        "DisplayVersion" "2.1.4"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "Publisher" "ylw"
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
@@ -204,11 +204,11 @@ SectionEnd
 Section "Initialize Policy Registry" SecPolicy
     DetailPrint "Initializing default policy registry..."
     
-    ; 创建 Policy 键并设置默认值: DefaultTileEnabled=0 (禁用默认 Tile)
-    WriteRegDWORD HKLM "SOFTWARE\WinSLA\Policy" "DefaultTileEnabled" 0
-    
-    DetailPrint "  ✓ Created HKLM\SOFTWARE\WinSLA\Policy"
-    DetailPrint "  ✓ Set DefaultTileEnabled=0 (default Tile hidden)"
+    ; 创建 Policy 键并设置默认值：DefaultTileEnabled=1 (启用默认 Tile，保障未配置配对时可登录)
+    WriteRegDWORD HKLM "SOFTWARE\WinSLA\Policy" "DefaultTileEnabled" 1
+        
+    DetailPrint "  ✓ Created HKLM\\SOFTWARE\\WinSLA\\Policy"
+    DetailPrint "  ✓ Set DefaultTileEnabled=1 (default Tile enabled for safe fallback)"
 SectionEnd
 
 Section "Start Menu Shortcuts" SecShortcuts

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import { getPolicy, updatePolicy, type PolicyConfig } from '../api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { getPolicy, updatePolicy, type PolicyConfig, getPairs } from '../api'
 
 const form = ref<PolicyConfig>({
-  max_retry_count: 3,
+  max_retry_count: 5,
   auth_timeout_secs: 30,
   allow_emergency_override: true,
   emergency_requires_reason: true,
@@ -14,22 +14,49 @@ const form = ref<PolicyConfig>({
 })
 const loading = ref(false)
 const saving = ref(false)
+const hasAnyPair = ref(false)
 
 async function load() {
   loading.value = true
   try {
-    const { data } = await getPolicy()
-    form.value = data
+    const [policyRes, pairsRes] = await Promise.all([
+      getPolicy(),
+      getPairs()
+    ])
+    form.value = policyRes.data
+    hasAnyPair.value = pairsRes.data.length > 0
   } catch { ElMessage.error('加载失败') }
   loading.value = false
 }
 
 async function save() {
+  // 安全检查：无配对时禁止禁用默认 Tile
+  if (!form.value.default_tile_enabled && !hasAnyPair.value) {
+    try {
+      await ElMessageBox.confirm(
+        '当前未配置任何配对规则，禁用默认登录 Tile 后将只能通过 WinSLA 双控登录。\n\n若 WinSLA 服务异常可能导致无法登录系统，是否确认禁用？',
+        '安全风险提示',
+        {
+          confirmButtonText: '确认禁用',
+          cancelButtonText: '保持启用',
+          type: 'error'
+        }
+      )
+      // 用户点击“确认禁用”，继续保存流程
+    } catch {
+      // 用户点击“保持启用”或关闭弹窗：恢复开关状态并放弃保存
+      form.value.default_tile_enabled = true
+      return
+    }
+  }
+  
   saving.value = true
   try {
     await updatePolicy(form.value)
     ElMessage.success('保存成功')
-  } catch (e: any) { ElMessage.error('保存失败: ' + e.message) }
+    // 重新加载以刷新缓存
+    await load()
+  } catch (e: any) { ElMessage.error('保存失败：' + e.message) }
   saving.value = false
 }
 

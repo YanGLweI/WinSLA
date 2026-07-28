@@ -162,10 +162,15 @@ pub async fn check_pairing_rule(account_username: &str, approver_username: &str)
         }
     };
     
-    // If no pairing rules are configured, allow any domain accounts to login
+    // If no pairing rules are configured, reject dual-auth login and direct
+    // users to the Windows default tile (which stays enabled until the first
+    // pairing rule is created). This prevents arbitrary domain-account pairs
+    // from bypassing the dual-control policy on unconfigured machines.
     if pairs.is_empty() {
-        info!("No pairing rules configured, allowing any domain accounts");
-        return Ok(());
+        warn!("No pairing rules configured, rejecting dual-auth login");
+        return Err(AuthError::InvalidCredentials(
+            "系统未配置配对规则，请使用 Windows 默认登录方式".to_string()
+        ));
     }
     
     // Normalize input usernames (strip domain, lowercase)
