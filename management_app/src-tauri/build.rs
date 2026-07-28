@@ -10,13 +10,9 @@ fn main() {
     println!("cargo:rerun-if-changed=frontend/dist");
 
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
-        let mut res = winres::WindowsResource::new();
-        res.set_icon("../../assets/winsla.ico");
-        res.set("ProductName", "WinSLA Management");
-        res.set("FileDescription", "WinSLA Dual-Account Authentication Management");
-        res.set("LegalCopyright", "MIT License - ylw");
-        res.set("FileVersion", "2.0.1");
-        res.set("ProductVersion", "2.0.1");
-        res.compile().expect("Failed to compile Windows resources");
+        // 使用 embed-resource 编译 winsla.rc（图标 + UAC manifest + 版本信息）
+        // .res 文件作为链接器直接输入，资源段无条件包含
+        // （winres 生成的纯资源 .lib 会被 MSVC 链接器丢弃，不可用）
+        embed_resource::compile("winsla.rc", embed_resource::NONE);
     }
 }
