@@ -356,10 +356,19 @@ unsafe extern "system" fn cred_get_field_state(
     let c = &*(this as *const DualAuthCredentialCom);
     // Per-tile field visibility:
     //   Dual tile      -> hides the emergency reason field
-    //   Emergency tile -> hides the approver fields
+    //   Emergency tile -> hides the approver fields; hides reason if policy doesn't require it
     let visible = match c.tile_type {
         TileType::Dual => field != FIELD_REASON,
-        TileType::Emergency => field != FIELD_USER_B_NAME && field != FIELD_USER_B_PASS,
+        TileType::Emergency => {
+            if field == FIELD_USER_B_NAME || field == FIELD_USER_B_PASS {
+                false
+            } else if field == FIELD_REASON
+                && !crate::provider_com::read_registry_emergency_requires_reason() {
+                false // Policy doesn't require reason -> hide the field
+            } else {
+                true
+            }
+        }
     };
     *state = if visible { CPFS_DISPLAY_IN_BOTH } else { CPFS_HIDDEN };
     *interactive = if field == FIELD_USER_A_NAME { CPFIS_FOCUSED } else { CPFIS_NONE };
@@ -593,7 +602,7 @@ unsafe fn serialize_emergency(
         *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
         return 0;
     }
-    if reason.trim().is_empty() {
+    if crate::provider_com::read_registry_emergency_requires_reason() && reason.trim().is_empty() {
         set_status(c, status_text, status_icon, "请填写应急登录原因", CPSI_ERROR);
         *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
         return 0;

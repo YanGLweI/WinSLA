@@ -3,15 +3,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getPolicy, updatePolicy, type PolicyConfig, getPairs } from '../api'
 
-const form = ref<PolicyConfig>({
-  max_retry_count: 5,
-  auth_timeout_secs: 30,
-  allow_emergency_override: true,
-  emergency_requires_reason: true,
-  offline_cache_enabled: true,
-  lockout_duration_minutes: 10,
-  default_tile_enabled: false,  // 安装后默认关闭默认 Tile，强制使用 WinSLA
-})
+const form = ref<PolicyConfig | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const hasAnyPair = ref(false)
@@ -30,6 +22,7 @@ async function load() {
 }
 
 async function save() {
+  if (!form.value) return
   // 安全检查：无配对时禁止禁用默认 Tile
   if (!form.value.default_tile_enabled && !hasAnyPair.value) {
     try {
@@ -72,7 +65,7 @@ onMounted(load)
       </div>
     </div>
 
-    <div class="settings-body" v-loading="loading">
+    <div class="settings-body" v-loading="loading" v-if="form">
       <div class="settings-group">
         <div class="group-title">认证参数</div>
         <div class="setting-row">

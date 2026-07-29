@@ -1,4 +1,4 @@
-ï»¿; WinSLA - Windows Dual-Account Authentication System
+; WinSLA - Windows Dual-Account Authentication System
 ; NSIS Installer Script v2.1.4
 ; Fixed: Audit log table field names (account_sid/approver_sid) and UI terminology update
 
@@ -6,7 +6,7 @@
 !include "LogicLib.nsh"
 !include "x64.nsh"
 
-; â”€â”€â”€ åŸºæœ¬ä¿¡æ¯ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+; ©¤©¤©¤ »ù±¾ĞÅÏ¢ ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
 Name "WinSLA v2.1.4"
 OutFile "WinSLA-v2.1.4-Setup.exe"
 InstallDir "$PROGRAMFILES64\WinSLA"
@@ -14,24 +14,24 @@ InstallDirRegKey HKLM "Software\WinSLA" "InstallDir"
 RequestExecutionLevel admin
 Unicode true
 
-; â”€â”€â”€ ç‰ˆæœ¬ä¿¡æ¯ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-VIProductVersion "2.1.4.0"
+; ©¤©¤©¤ °æ±¾ĞÅÏ¢ ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+VIProductVersion "2.1.5.0"
 VIAddVersionKey "ProductName" "WinSLA"
-VIAddVersionKey "FileVersion" "2.1.4"
+VIAddVersionKey "FileVersion" "2.1.5"
 VIAddVersionKey "FileDescription" "WinSLA - Windows Dual-Account Authentication System"
 VIAddVersionKey "LegalCopyright" "MIT License - 2026 ylw"
 
-; â”€â”€â”€ ç•Œé¢é…ç½® â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+; ©¤©¤©¤ ½çÃæÅäÖÃ ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
 !define MUI_ICON "..\assets\winsla.ico"
 !define MUI_UNICON "..\assets\winsla.ico"
 Icon "..\assets\winsla.ico"
 UninstallIcon "..\assets\winsla.ico"
-!define MUI_WELCOMEPAGE_TITLE "WinSLA åŒè´¦å·è®¤è¯ç³»ç»Ÿ å®‰è£…å‘å¯¼"
-!define MUI_WELCOMEPAGE_TEXT "æœ¬å‘å¯¼å°†å®‰è£… WinSLA Windows åŒè´¦å·ååŒç™»å½•ä»£ç†ã€‚$\r$\n$\r$\nWinSLA å®ç°'é‡‘åº“åŒäººåŸåˆ™'ï¼Œè¦æ±‚ä¸¤ä¸ªç‹¬ç«‹ AD åŸŸè´¦å·åŒæ—¶éªŒè¯é€šè¿‡æ–¹å¯ç™»å½•ã€‚$\r$\n$\r$\n âš ï¸ è­¦å‘Šï¼šå®‰è£…åä¼šå½±å“ç³»ç»Ÿç™»å½•æµç¨‹ï¼Œè¯·ç¡®ä¿åœ¨æµ‹è¯•ç¯å¢ƒä¸­æ“ä½œã€‚$\r$\n$\r$\nç‚¹å‡»'ä¸‹ä¸€æ­¥'ç»§ç»­ã€‚"
-!define MUI_FINISHPAGE_TITLE "å®‰è£…å®Œæˆ"
-!define MUI_FINISHPAGE_TEXT "WinSLA å·²æˆåŠŸå®‰è£…ã€‚$\r$\n$\r$\nâœ… å·²è‡ªåŠ¨æ³¨å†Œ Credential Provider åˆ°ç³»ç»Ÿæ³¨å†Œè¡¨!$\r$\nâœ… å·²å¯åŠ¨è®¤è¯æœåŠ¡ !$\r$\nâœ… å·²å¯ç”¨ä¸¥æ ¼é…å¯¹è§„åˆ™éªŒè¯åŠŸèƒ½ï¼ˆä¸»è´¦å· + å®¡æ‰¹äººå¿…é¡»é¡ºåºåŒ¹é…ï¼‰ï¼$\r$\n$\r$\nä¸‹æ¬¡ç™»å½•æ—¶å°†æ˜¾ç¤ºåŒè´¦å·è®¤è¯ç•Œé¢ã€‚$\r$\n$\r$\nå¦‚éœ€å¸è½½ï¼Œè¯·é€šè¿‡æ§åˆ¶é¢æ¿æˆ–è¿è¡Œå¸è½½ç¨‹åºã€‚"
+!define MUI_WELCOMEPAGE_TITLE "WinSLA Ë«ÕËºÅÈÏÖ¤ÏµÍ³ °²×°Ïòµ¼"
+!define MUI_WELCOMEPAGE_TEXT "±¾Ïòµ¼½«°²×° WinSLA Windows Ë«ÕËºÅĞ­Í¬µÇÂ¼´úÀí¡£$\r$\n$\r$\nWinSLA ÊµÏÖ'½ğ¿âË«ÈËÔ­Ôò'£¬ÒªÇóÁ½¸ö¶ÀÁ¢ AD ÓòÕËºÅÍ¬Ê±ÑéÖ¤Í¨¹ı·½¿ÉµÇÂ¼¡£$\r$\n$\r$\n ?? ¾¯¸æ£º°²×°ºó»áÓ°ÏìÏµÍ³µÇÂ¼Á÷³Ì£¬ÇëÈ·±£ÔÚ²âÊÔ»·¾³ÖĞ²Ù×÷¡£$\r$\n$\r$\nµã»÷'ÏÂÒ»²½'¼ÌĞø¡£"
+!define MUI_FINISHPAGE_TITLE "°²×°Íê³É"
+!define MUI_FINISHPAGE_TEXT "WinSLA ÒÑ³É¹¦°²×°¡£$\r$\n$\r$\n? ÒÑ×Ô¶¯×¢²á Credential Provider µ½ÏµÍ³×¢²á±í!$\r$\n? ÒÑÆô¶¯ÈÏÖ¤·şÎñ !$\r$\n? ÒÑÆôÓÃÑÏ¸ñÅä¶Ô¹æÔòÑéÖ¤¹¦ÄÜ£¨Ö÷ÕËºÅ + ÉóÅúÈË±ØĞëË³ĞòÆ¥Åä£©£¡$\r$\n$\r$\nÏÂ´ÎµÇÂ¼Ê±½«ÏÔÊ¾Ë«ÕËºÅÈÏÖ¤½çÃæ¡£$\r$\n$\r$\nÈçĞèĞ¶ÔØ£¬ÇëÍ¨¹ı¿ØÖÆÃæ°å»òÔËĞĞĞ¶ÔØ³ÌĞò¡£"
 
-; â”€â”€â”€ é¡µé¢ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+; ©¤©¤©¤ Ò³Ãæ ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
@@ -41,39 +41,39 @@ UninstallIcon "..\assets\winsla.ico"
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
-; â”€â”€â”€ è¯­è¨€ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+; ©¤©¤©¤ ÓïÑÔ ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
 
-; â”€â”€â”€ å¸¸é‡ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+; ©¤©¤©¤ ³£Á¿ ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
 !define CP_CLSID "{E4D9F6E7-8A2B-4C3D-9E5F-1A2B3C4D5E6F}"
 !define FILTER_CLSID "{E4D9F6E8-8A2B-4C3D-9E5F-1A2B3C4D5E6F}"
 !define SERVICE_NAME "WinSLA Service"
 !define PIPE_NAME "winsla-auth-pipe"
 
-; â”€â”€â”€ å®‰è£…åŒºæ®µ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+; ©¤©¤©¤ °²×°Çø¶Î ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
 Section "Core Files" SecCore
     SectionIn RO
 
-    ; åˆ›å»ºå®‰è£…ç›®å½•
+    ; ´´½¨°²×°Ä¿Â¼
     SetOutPath "$INSTDIR"
 
-    ; å¤åˆ¶æ ¸å¿ƒæ–‡ä»¶
+    ; ¸´ÖÆºËĞÄÎÄ¼ş
     File "..\target\release\DualAuthCP.dll"
     File "..\target\release\winsla-service.exe"
     File "..\target\release\winsla-management.exe"
     File "..\assets\winsla.ico"
 
-    ; å¤åˆ¶è„šæœ¬
+    ; ¸´ÖÆ½Å±¾
     SetOutPath "$INSTDIR\scripts"
     File "..\scripts\install.ps1"
     File "..\scripts\unregister.ps1"
 
-    ; å†™å…¥å®‰è£…è·¯å¾„åˆ°æ³¨å†Œè¡¨
+    ; Ğ´Èë°²×°Â·¾¶µ½×¢²á±í
     WriteRegStr HKLM "Software\WinSLA" "InstallDir" "$INSTDIR"
-    WriteRegStr HKLM "Software\WinSLA" "Version" "2.1.4"
+    WriteRegStr HKLM "Software\WinSLA" "Version" "2.1.5"
 
-    ; åˆ›å»ºå¸è½½ç¨‹åº
+    ; ´´½¨Ğ¶ÔØ³ÌĞò
     WriteUninstaller "$INSTDIR\uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "DisplayName" "WinSLA - Dual-Account Authentication"
@@ -100,9 +100,9 @@ Section "Register Credential Provider" SecCP
     ; Create InprocServer32 subkey (standard COM registration)
     WriteRegStr HKLM "SOFTWARE\Classes\CLSID\${CP_CLSID}\InprocServer32" "" "$INSTDIR\DualAuthCP.dll"
     WriteRegStr HKLM "SOFTWARE\Classes\CLSID\${CP_CLSID}\InprocServer32" "ThreadingModel" "Apartment"
-    DetailPrint "  âœ“ Created InprocServer32 subkey"
-    DetailPrint "  âœ“ DLL Path: $INSTDIR\DualAuthCP.dll"
-    DetailPrint "  âœ“ ThreadingModel: Apartment (required by LogonUI)"
+    DetailPrint "  ? Created InprocServer32 subkey"
+    DetailPrint "  ? DLL Path: $INSTDIR\DualAuthCP.dll"
+    DetailPrint "  ? ThreadingModel: Apartment (required by LogonUI)"
     
     ; Step 2: Register this CP with Windows Authentication system (THE KEY STEP!)
     ; This is where WinSLA tells LogonUI about the new credential provider
@@ -115,9 +115,9 @@ Section "Register Credential Provider" SecCP
     ; Disabled=0 means ENABLED (this is how Windows works - 0 = active, 1 = disabled)
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}" "Disabled" 0
     
-    DetailPrint "  âœ“ Added to Credential Providers list"
-    DetailPrint "  âœ“ Set Disabled=0 (ENABLED/active)"
-    DetailPrint "âœ“ Credential Provider registration completed!"
+    DetailPrint "  ? Added to Credential Providers list"
+    DetailPrint "  ? Set Disabled=0 (ENABLED/active)"
+    DetailPrint "? Credential Provider registration completed!"
     
     ; Step 3: Register Credential Provider Filter (separate CLSID)
     DetailPrint "Registering Credential Provider Filter..."
@@ -125,14 +125,14 @@ Section "Register Credential Provider" SecCP
     WriteRegStr HKLM "SOFTWARE\Classes\CLSID\${FILTER_CLSID}" "" "WinSLA Credential Provider Filter"
     WriteRegStr HKLM "SOFTWARE\Classes\CLSID\${FILTER_CLSID}\InprocServer32" "" "$INSTDIR\DualAuthCP.dll"
     WriteRegStr HKLM "SOFTWARE\Classes\CLSID\${FILTER_CLSID}\InprocServer32" "ThreadingModel" "Apartment"
-    DetailPrint "  âœ“ Created Filter CLSID key: ${FILTER_CLSID}"
+    DetailPrint "  ? Created Filter CLSID key: ${FILTER_CLSID}"
     
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider Filters\${FILTER_CLSID}" "" "WinSLA Filter"
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider Filters\${FILTER_CLSID}" "Disabled" 0
-    DetailPrint "  âœ“ Added to Credential Provider Filters list"
-    DetailPrint "  âœ“ Set Disabled=0 (ENABLED/active)"
+    DetailPrint "  ? Added to Credential Provider Filters list"
+    DetailPrint "  ? Set Disabled=0 (ENABLED/active)"
     
-    DetailPrint "âœ“ All registrations completed successfully!"
+    DetailPrint "? All registrations completed successfully!"
 SectionEnd
 
 Section "Install Windows Service" SecService
@@ -141,14 +141,14 @@ Section "Install Windows Service" SecService
     ; Stop any existing service first (from previous installation)
     nsExec::ExecToLog 'sc.exe stop "${SERVICE_NAME}"'
     Pop $0
-    ${If} $0 != 1060 ; é”™è¯¯ç  1060 = æœåŠ¡æœªå®‰è£…æ˜¯æ­£å¸¸çš„
+    ${If} $0 != 1060 ; ´íÎóÂë 1060 = ·şÎñÎ´°²×°ÊÇÕı³£µÄ
         DetailPrint "Stopped existing service (or no service was running)"
     ${EndIf}
     
     ; Remove service if it exists (sometimes registry entry remains)
     nsExec::ExecToLog 'sc.exe delete "${SERVICE_NAME}"'
     Pop $0
-    ${If} $0 != 1060 ; æ­£å¸¸æˆ–ä¸å­˜åœ¨éƒ½æ˜¯ ok çš„
+    ${If} $0 != 1060 ; Õı³£»ò²»´æÔÚ¶¼ÊÇ ok µÄ
         DetailPrint "Removed old service entry"
     ${ElseIf} $0 == 1060
         DetailPrint "Service does not exist yet (normal on fresh install)"
@@ -157,10 +157,10 @@ Section "Install Windows Service" SecService
     ; Create new service with sc.exe (standard Windows method)
     nsExec::ExecToLog 'sc.exe create "${SERVICE_NAME}" binPath= "$INSTDIR\winsla-service.exe --service" start= auto' 2>&1
     Pop $0
-    StrCpy $0 $0 1 ; åªå–ç¬¬ä¸€ä¸ªå­—ç¬¦ï¼ˆæˆåŠŸ/å¤±è´¥ï¼‰
+    StrCpy $0 $0 1 ; Ö»È¡µÚÒ»¸ö×Ö·û£¨³É¹¦/Ê§°Ü£©
     
     ${If} $0 == "0"
-        DetailPrint "âœ“ Service created successfully"
+        DetailPrint "? Service created successfully"
         
         ; Wait a moment for registry to sync
         Sleep 1000
@@ -170,22 +170,22 @@ Section "Install Windows Service" SecService
         Pop $0
         
         ${If} $0 == "0"
-            DetailPrint "âœ“ Service started and is running"
-        ${ElseIf} $0 == "1060" ; é”™è¯¯ç  1060 = æœåŠ¡å·²å­˜åœ¨ä½†æœªè¿è¡Œ
-            DetailPrint "âš  Service already registered, starting..."
+            DetailPrint "? Service started and is running"
+        ${ElseIf} $0 == "1060" ; ´íÎóÂë 1060 = ·şÎñÒÑ´æÔÚµ«Î´ÔËĞĞ
+            DetailPrint "? Service already registered, starting..."
             Sleep 500
             nsExec::ExecToLog 'net start "${SERVICE_NAME}"' 2>&1
             Pop $0
             ${If} $0 == "0"
-                DetailPrint "âœ“ Service started"
+                DetailPrint "? Service started"
             ${Else}
-                DetailPrint "âœ— Failed to start service (error: $0), but registration completed"
+                DetailPrint "? Failed to start service (error: $0), but registration completed"
             ${EndIf}
         ${Else}
-            DetailPrint "âœ— Service start failed (error code: $0), but registration is complete"
+            DetailPrint "? Service start failed (error code: $0), but registration is complete"
         ${EndIf}
     ${Else}
-        DetailPrint "âœ— Service creation failed (error: $0)"
+        DetailPrint "? Service creation failed (error: $0)"
         DetailPrint "You may need to manually run: sc.exe create ..."
         MessageBox MB_ICONSTOP "Service installation failed!\n\nError code: $0\n\nPlease check error log above." IDOK
     ${EndIf}
@@ -195,20 +195,23 @@ Section "Install Windows Service" SecService
     nsExec::ExecToLog 'sc.exe query "${SERVICE_NAME}" type= SERVICE'
     Pop $0
     ${If} $0 != "0"
-        DetailPrint "âœ— Query service failed - checking service status in Control Panel"
+        DetailPrint "? Query service failed - checking service status in Control Panel"
     ${Else}
-        DetailPrint "âœ“ Service verification passed"
+        DetailPrint "? Service verification passed"
     ${EndIf}
 SectionEnd
 
 Section "Initialize Policy Registry" SecPolicy
     DetailPrint "Initializing default policy registry..."
     
-    ; åˆ›å»º Policy é”®å¹¶è®¾ç½®é»˜è®¤å€¼ï¼šDefaultTileEnabled=1 (å¯ç”¨é»˜è®¤ Tileï¼Œä¿éšœæœªé…ç½®é…å¯¹æ—¶å¯ç™»å½•)
+    ; ´´½¨ Policy ¼ü²¢ÉèÖÃÄ¬ÈÏÖµ£ºDefaultTileEnabled=1 (ÆôÓÃÄ¬ÈÏ Tile£¬±£ÕÏÎ´ÅäÖÃÅä¶ÔÊ±¿ÉµÇÂ¼)
     WriteRegDWORD HKLM "SOFTWARE\WinSLA\Policy" "DefaultTileEnabled" 1
+    ; EmergencyRequiresReason=1 (Ä¬ÈÏÒªÇóÌîĞ´Ó¦¼±µÇÂ¼Ô­Òò)
+    WriteRegDWORD HKLM "SOFTWARE\WinSLA\Policy" "EmergencyRequiresReason" 1
         
-    DetailPrint "  âœ“ Created HKLM\\SOFTWARE\\WinSLA\\Policy"
-    DetailPrint "  âœ“ Set DefaultTileEnabled=1 (default Tile enabled for safe fallback)"
+    DetailPrint "  ? Created HKLM\\SOFTWARE\\WinSLA\\Policy"
+    DetailPrint "  ? Set DefaultTileEnabled=1 (default Tile enabled for safe fallback)"
+    DetailPrint "  ? Set EmergencyRequiresReason=1 (emergency login requires reason)"
 SectionEnd
 
 Section "Start Menu Shortcuts" SecShortcuts
@@ -216,47 +219,47 @@ Section "Start Menu Shortcuts" SecShortcuts
     CreateShortcut "$SMPROGRAMS\WinSLA\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe" "" "$INSTDIR\winsla.ico" 0
     CreateShortcut "$SMPROGRAMS\WinSLA\Uninstall WinSLA.lnk" "$INSTDIR\uninstall.exe"
 
-    ; æ¡Œé¢å¿«æ·æ–¹å¼ (å…ˆåˆ é™¤æ—§çš„ï¼Œå†åˆ›å»ºæ–°çš„)
+    ; ×ÀÃæ¿ì½İ·½Ê½ (ÏÈÉ¾³ı¾ÉµÄ£¬ÔÙ´´½¨ĞÂµÄ)
     Delete "$DESKTOP\WinSLA Management.lnk"
     CreateShortcut "$DESKTOP\WinSLA Management.lnk" "$INSTDIR\winsla-management.exe" "" "$INSTDIR\winsla.ico" 0
 
-    ; åˆ·æ–°å›¾æ ‡ç¼“å­˜
+    ; Ë¢ĞÂÍ¼±ê»º´æ
     nsExec::ExecToLog 'ie4uinit.exe -show'
     Pop $0
     
-    ; åˆ›å»ºå®‰è£…å®Œæˆæ ‡è®°ï¼ˆç”¨äºåç»­åˆ·æ–°ï¼‰
+    ; ´´½¨°²×°Íê³É±ê¼Ç£¨ÓÃÓÚºóĞøË¢ĞÂ£©
     WriteRegStr HKLM "Software\WinSLA" "InstallComplete" "1"
-    DetailPrint "å®‰è£…é…ç½®å·²å®Œæˆï¼Œè¯·é‡å¯è®¡ç®—æœºåº”ç”¨æ›´æ”¹"
+    DetailPrint "°²×°ÅäÖÃÒÑÍê³É£¬ÇëÖØÆô¼ÆËã»úÓ¦ÓÃ¸ü¸Ä"
 SectionEnd
 
-; â”€â”€â”€ å¸è½½åŒºæ®µ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+; ©¤©¤©¤ Ğ¶ÔØÇø¶Î ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
 Section "Uninstall"
-    ; åœæ­¢å¹¶åˆ é™¤æœåŠ¡
+    ; Í£Ö¹²¢É¾³ı·şÎñ
     nsExec::ExecToLog 'net stop "${SERVICE_NAME}"'
     nsExec::ExecToLog 'sc delete "${SERVICE_NAME}"'
 
-    ; æ³¨é”€ Credential Provider
+    ; ×¢Ïú Credential Provider
     DeleteRegKey HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\${CP_CLSID}"
     DeleteRegKey HKLM "SOFTWARE\Classes\CLSID\${CP_CLSID}"
     
-    ; æ³¨é”€ Credential Provider Filter
+    ; ×¢Ïú Credential Provider Filter
     DeleteRegKey HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider Filters\${FILTER_CLSID}"
     DeleteRegKey HKLM "SOFTWARE\Classes\CLSID\${FILTER_CLSID}"
     
-    ; åˆ é™¤ Policy æ³¨å†Œè¡¨
+    ; É¾³ı Policy ×¢²á±í
     DeleteRegKey HKLM "SOFTWARE\WinSLA\Policy"
 
-    ; åˆ é™¤æ³¨å†Œè¡¨
+    ; É¾³ı×¢²á±í
     DeleteRegKey HKLM "Software\WinSLA"
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA"
 
-    ; åˆ é™¤å¼€å§‹èœå•å’Œæ¡Œé¢å¿«æ·æ–¹å¼
+    ; É¾³ı¿ªÊ¼²Ëµ¥ºÍ×ÀÃæ¿ì½İ·½Ê½
     Delete "$DESKTOP\WinSLA Management.lnk"
     Delete "$SMPROGRAMS\WinSLA\WinSLA Management.lnk"
     Delete "$SMPROGRAMS\WinSLA\Uninstall WinSLA.lnk"
     RMDir "$SMPROGRAMS\WinSLA"
 
-    ; åˆ é™¤æ–‡ä»¶
+    ; É¾³ıÎÄ¼ş
     Delete "$INSTDIR\DualAuthCP.dll"
     Delete "$INSTDIR\winsla-service.exe"
     Delete "$INSTDIR\winsla-management.exe"
@@ -267,14 +270,14 @@ Section "Uninstall"
     RMDir "$INSTDIR\scripts"
     RMDir "$INSTDIR"
 
-    DetailPrint "WinSLA å·²å®Œå…¨å¸è½½"
+    DetailPrint "WinSLA ÒÑÍêÈ«Ğ¶ÔØ"
 SectionEnd
 
-; â”€â”€â”€ æè¿° â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-LangString DESC_SecCore ${LANG_SIMPCHINESE} "æ ¸å¿ƒæ–‡ä»¶ (DLLã€æœåŠ¡ã€ç®¡ç†ç«¯ã€è„šæœ¬)"
-LangString DESC_SecCP ${LANG_SIMPCHINESE} "æ³¨å†Œ Credential Provider åˆ°ç³»ç»Ÿ (å½±å“ç™»å½•ç•Œé¢)"
-LangString DESC_SecService ${LANG_SIMPCHINESE} "å®‰è£…å¹¶å¯åŠ¨ WinSLA Windows è®¤è¯æœåŠ¡"
-LangString DESC_SecShortcuts ${LANG_SIMPCHINESE} "åˆ›å»ºå¼€å§‹èœå•å¿«æ·æ–¹å¼"
+; ©¤©¤©¤ ÃèÊö ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+LangString DESC_SecCore ${LANG_SIMPCHINESE} "ºËĞÄÎÄ¼ş (DLL¡¢·şÎñ¡¢¹ÜÀí¶Ë¡¢½Å±¾)"
+LangString DESC_SecCP ${LANG_SIMPCHINESE} "×¢²á Credential Provider µ½ÏµÍ³ (Ó°ÏìµÇÂ¼½çÃæ)"
+LangString DESC_SecService ${LANG_SIMPCHINESE} "°²×°²¢Æô¶¯ WinSLA Windows ÈÏÖ¤·şÎñ"
+LangString DESC_SecShortcuts ${LANG_SIMPCHINESE} "´´½¨¿ªÊ¼²Ëµ¥¿ì½İ·½Ê½"
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} $(DESC_SecCore)
@@ -283,36 +286,36 @@ LangString DESC_SecShortcuts ${LANG_SIMPCHINESE} "åˆ›å»ºå¼€å§‹èœå•å¿«æ·æ–¹å¼
     !insertmacro MUI_DESCRIPTION_TEXT ${SecShortcuts} $(DESC_SecShortcuts)
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
-; â”€â”€â”€ åˆå§‹åŒ–æ£€æŸ¥ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+; ©¤©¤©¤ ³õÊ¼»¯¼ì²é ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
 Function .onInit
-    ; å…³é”®ä¿®å¤: NSIS å®‰è£…å™¨æ˜¯ 32 ä½è¿›ç¨‹ï¼Œé»˜è®¤å†™ HKLM\SOFTWARE ä¼šè¢« WOW64
-    ; é‡å®šå‘åˆ° WOW6432Nodeã€‚å¿…é¡»åˆ‡æ¢åˆ° 64 ä½æ³¨å†Œè¡¨è§†å›¾ï¼Œ
-    ; å¦åˆ™ 64 ä½ LogonUI è¯»ä¸åˆ° Credential Provider æ³¨å†Œã€‚
+    ; ¹Ø¼üĞŞ¸´: NSIS °²×°Æ÷ÊÇ 32 Î»½ø³Ì£¬Ä¬ÈÏĞ´ HKLM\SOFTWARE »á±» WOW64
+    ; ÖØ¶¨Ïòµ½ WOW6432Node¡£±ØĞëÇĞ»»µ½ 64 Î»×¢²á±íÊÓÍ¼£¬
+    ; ·ñÔò 64 Î» LogonUI ¶Á²»µ½ Credential Provider ×¢²á¡£
     SetRegView 64
 
-    ; æ£€æŸ¥ç®¡ç†å‘˜æƒé™
+    ; ¼ì²é¹ÜÀíÔ±È¨ÏŞ
     UserInfo::GetAccountType
     Pop $0
     ${If} $0 != "admin"
-        MessageBox MB_ICONSTOP "æ­¤å®‰è£…ç¨‹åºéœ€è¦ç®¡ç†å‘˜æƒé™è¿è¡Œã€‚$\r$\nè¯·å³é”®é€‰æ‹©'ä»¥ç®¡ç†å‘˜èº«ä»½è¿è¡Œ'ã€‚"
+        MessageBox MB_ICONSTOP "´Ë°²×°³ÌĞòĞèÒª¹ÜÀíÔ±È¨ÏŞÔËĞĞ¡£$\r$\nÇëÓÒ¼üÑ¡Ôñ'ÒÔ¹ÜÀíÔ±Éí·İÔËĞĞ'¡£"
         Abort
     ${EndIf}
 
-    ; æ£€æŸ¥ 64 ä½ç³»ç»Ÿ
+    ; ¼ì²é 64 Î»ÏµÍ³
     ${IfNot} ${RunningX64}
-        MessageBox MB_ICONSTOP "WinSLA ä»…æ”¯æŒ 64 ä½ Windows ç³»ç»Ÿã€‚"
+        MessageBox MB_ICONSTOP "WinSLA ½öÖ§³Ö 64 Î» Windows ÏµÍ³¡£"
         Abort
     ${EndIf}
 
-    ; å®‰å…¨è­¦å‘Š
+    ; °²È«¾¯¸æ
     MessageBox MB_YESNO|MB_ICONEXCLAMATION \
-        "âš ï¸ å®‰å…¨è­¦å‘Š$\r$\n$\r$\nå®‰è£… Credential Provider å°†ä¿®æ”¹ç³»ç»Ÿç™»å½•æµç¨‹ã€‚$\r$\nå¦‚æœé…ç½®é”™è¯¯ï¼Œå¯èƒ½å¯¼è‡´æ— æ³•æ­£å¸¸ç™»å½•ã€‚$\r$\n$\r$\nå¼ºçƒˆå»ºè®®åœ¨è™šæ‹Ÿæœºä¸­æµ‹è¯•ã€‚$\r$\n$\r$\nç¡®è®¤ç»§ç»­å®‰è£…ï¼Ÿ" \
+        "?? °²È«¾¯¸æ$\r$\n$\r$\n°²×° Credential Provider ½«ĞŞ¸ÄÏµÍ³µÇÂ¼Á÷³Ì¡£$\r$\nÈç¹ûÅäÖÃ´íÎó£¬¿ÉÄÜµ¼ÖÂÎŞ·¨Õı³£µÇÂ¼¡£$\r$\n$\r$\nÇ¿ÁÒ½¨ÒéÔÚĞéÄâ»úÖĞ²âÊÔ¡£$\r$\n$\r$\nÈ·ÈÏ¼ÌĞø°²×°£¿" \
         IDYES continue
     Abort
     continue:
 FunctionEnd
 
 Function un.onInit
-    ; å¸è½½æ—¶åŒæ ·ä½¿ç”¨ 64 ä½æ³¨å†Œè¡¨è§†å›¾ï¼Œç¡®ä¿èƒ½åˆ é™¤ 64 ä½è§†å›¾ä¸‹çš„é”®
+    ; Ğ¶ÔØÊ±Í¬ÑùÊ¹ÓÃ 64 Î»×¢²á±íÊÓÍ¼£¬È·±£ÄÜÉ¾³ı 64 Î»ÊÓÍ¼ÏÂµÄ¼ü
     SetRegView 64
 FunctionEnd

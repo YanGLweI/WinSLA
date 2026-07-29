@@ -697,3 +697,56 @@ fn read_registry_default_tile_enabled() -> Result<Option<bool>, String> {
         Ok(Some(value == 1))
     }
 }
+
+/// Read EmergencyRequiresReason from Windows Registry.
+/// Returns true if the key doesn't exist or read fails (fail-safe: require reason).
+pub(crate) fn read_registry_emergency_requires_reason() -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, HKEY, REG_SAM_FLAGS};
+    
+    const KEY_READ: u32 = 0x20019;
+    
+    let wide_path: Vec<u16> = OsStr::new(REGISTRY_POLICY_KEY)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    
+    let mut hkey = HKEY(std::ptr::null_mut());
+    let result = unsafe {
+        RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            windows::core::PCWSTR(wide_path.as_ptr()),
+            0,
+            REG_SAM_FLAGS(KEY_READ),
+            &mut hkey,
+        )
+    };
+    
+    if result != ERROR_SUCCESS {
+        return true; // Key doesn't exist -> fail-safe: require reason
+    }
+    
+    let mut value: u32 = 0;
+    let mut vsize: u32 = 4;
+    let value_name = OsStr::new("EmergencyRequiresReason").encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let result2 = unsafe {
+        RegQueryValueExW(
+            hkey,
+            windows::core::PCWSTR(value_name.as_ptr()),
+            None,
+            None,
+            Some(&mut value as *mut _ as *mut u8),
+            Some(&mut vsize),
+        )
+    };
+    
+    unsafe { RegCloseKey(hkey); }
+    
+    if result2 != ERROR_SUCCESS {
+        true // Read failed -> fail-safe: require reason
+    } else {
+        value == 1
+    }
+}

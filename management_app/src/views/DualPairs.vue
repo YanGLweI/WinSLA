@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getPairs, addPair, deletePair, validateAccount as validateAccountApi, type DualPair, type AddPairResponse } from '../api'
@@ -7,6 +7,7 @@ import { getPairs, addPair, deletePair, validateAccount as validateAccountApi, t
 const pairs = ref<DualPair[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
+const accountInputRef = ref<InstanceType<any> | null>(null)
 
 const router = useRouter()
 
@@ -134,6 +135,17 @@ async function handleDelete(row: DualPair) {
   } catch (e: any) { ElMessage.error('删除失败：' + e.message) }
 }
 
+async function handleDialogOpen() {
+  // 等待 DOM 更新后聚焦
+  await nextTick()
+  setTimeout(() => {
+    if (accountInputRef.value) {
+      const inputEl = accountInputRef.value.$refs.input || accountInputRef.value
+      ;(inputEl as HTMLElement)?.focus?.()
+    }
+  }, 100)
+}
+
 onMounted(load)
 </script>
 
@@ -170,11 +182,12 @@ onMounted(load)
       </el-table>
     </div>
   
-    <el-dialog v-model="dialogVisible" title="新增主账号与审批人" width="460px" :close-on-click-modal="false" @closed="resetForm">
+    <el-dialog v-model="dialogVisible" title="新增主账号与审批人" width="460px" :close-on-click-modal="false" @closed="resetForm" @open="handleDialogOpen">
       <el-form label-width="80px" size="small">
         <el-divider content-position="left">主账号（实际登录者）</el-divider>
         <el-form-item label="用户名">
           <el-input 
+            ref="accountInputRef"
             v-model="form.account_username" 
             placeholder="alice 或 DOMAIN\alice 或 alice@domain.com" 
             :disabled="validatedAccount"

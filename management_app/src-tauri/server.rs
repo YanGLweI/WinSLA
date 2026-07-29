@@ -306,15 +306,40 @@ fn write_policy_to_registry(config: &crate::database::PolicyConfig) -> Result<()
         )
     };
     
-    unsafe { let _ = RegCloseKey(hkey); }
-    
     if result2 != ERROR_SUCCESS {
-        let err_msg = format!("RegSetValueExW failed: {:?} (error code: {})", result2, result2.0);
+        unsafe { let _ = RegCloseKey(hkey); }
+        let err_msg = format!("RegSetValueExW(DefaultTileEnabled) failed: {:?}", result2);
         eprintln!("{}", err_msg);
         return Err(err_msg);
     }
     
-    eprintln!("Successfully wrote DefaultTileEnabled={} to registry", config.default_tile_enabled);
+    // 写入 EmergencyRequiresReason 值
+    let value_name2 = OsStr::new("EmergencyRequiresReason")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+    let value_data2: [u8; 4] = (if config.emergency_requires_reason { 1u32 } else { 0u32 }).to_le_bytes();
+    
+    let result3 = unsafe {
+        RegSetValueExW(
+            hkey,
+            windows::core::PCWSTR(value_name2.as_ptr()),
+            0,
+            REG_VALUE_TYPE(4), // REG_DWORD
+            Some(&value_data2),
+        )
+    };
+    
+    unsafe { let _ = RegCloseKey(hkey); }
+    
+    if result3 != ERROR_SUCCESS {
+        let err_msg = format!("RegSetValueExW(EmergencyRequiresReason) failed: {:?}", result3);
+        eprintln!("{}", err_msg);
+        return Err(err_msg);
+    }
+    
+    eprintln!("Successfully wrote DefaultTileEnabled={}, EmergencyRequiresReason={} to registry",
+        config.default_tile_enabled, config.emergency_requires_reason);
     Ok(())
 }
 

@@ -203,6 +203,103 @@ net stop "WinSLA Service"
 
 ---
 
+## 应急处理指南
+
+### ⚠️ 场景一：WinSLA Service 崩溃导致无法登录
+
+**症状**：双控验证失败但无应急账号，或系统重启后问题复现。
+
+**解决方案**：
+
+1. **进入安全模式**（推荐）：
+   - 重启计算机，在 Windows 启动徽标出现前强制关机 3 次，进入「自动修复」界面
+   - 「高级选项」→「故障排除」→「高级选项」→「启动设置」→「重启」
+   - 按 `F4` 或 `4` 进入「安全模式」
+
+2. **临时启用默认 Tile**（快速恢复登录）：
+   - 以管理员身份打开 PowerShell 或 CMD
+   - 执行以下命令移除 WinSLA 的 Credential Provider：
+     ```powershell
+     Reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonSession" /v "{YOUR-WinSLA-CLSID}" /f
+     ```
+   - 或直接禁用 DefaultTile：
+     ```powershell
+     Set-ItemProperty -Path "HKLM:\SOFTWARE\WinSLA\Policy" -Name "DefaultTileEnabled" -Value 0
+     ```
+   - 重启后使用 Windows 原生登录界面进入系统
+
+3. **彻底修复**：
+   - 运行卸载脚本：`scripts\emergency-uninstall.ps1`
+   - 或手动删除服务：`sc.exe delete "WinSLA Service"`
+   - 删除 DLL：`Remove-Item "C:\Program Files\WinSLA\*.*" -Force`
+   - 重启
+
+### 🔐 场景二：应急账号被锁定或失效
+
+**解决方案**：
+
+1. **通过注册表紧急启用默认 Tile**：
+   - 进入安全模式（见上）
+   - 以管理员身份运行 PowerShell：
+     ```powershell
+     # 检查当前策略
+     Get-ItemProperty "HKLM:\SOFTWARE\WinSLA\Policy"
+
+     # 启用默认 Tile
+     Set-ItemProperty -Path "HKLM:\SOFTWARE\WinSLL\Policy" -Name "DefaultTileEnabled" -Value 1
+     
+     # 刷新 CP 缓存
+     & "$PSScriptRoot\scripts\flush-cp-cache.ps1"
+     ```
+
+2. **重新配置应急账号**：
+   - 启动管理端：`.	arget\release\winsla-management.exe`
+   - 在「应急账号」模块中添加/启用授权管理员
+
+### 🛡️ 场景三：Service 无法正常启动
+
+**诊断步骤**：
+
+```powershell
+# 1. 检查服务状态
+sc.exe query "WinSLA Service"
+
+# 2. 查看事件日志
+Get-EventLog -LogName Application -Source "WinSLA Service" -Newest 10
+
+# 3. 手动测试服务（前台调试模式）
+.	arget\release\winsla-service.exe
+
+# 4. 测试 Named Pipe 连接
+# 使用工具如 pipe_list + test client，或使用：
+call "C:\Program Files (x86)\Windows Kits\10\Debuggers x64\debug.exe"
+test \pipe\winsla-auth-pipe
+```
+
+**恢复措施**：
+
+```powershell
+# 重启服务
+net stop "WinSLA Service"
+net start "WinSLA Service"
+
+# 若失败，重新安装
+.\scripts\register-cp.ps1
+net start "WinSLA Service"
+```
+
+### 📋 常用运维脚本
+
+| 脚本 | 用途 | 注意事项 |
+|------|------|----------|
+| `scripts\emergency-recovery.ps1` | 一键禁用 DefaultTile，恢复 Windows 原生登录 | 需管理员权限 |
+| `scripts\emergency-uninstall.ps1` | 完全卸载 WinSLA（服务+CP+ 文件） | 不可逆操作 |
+| `scripts\diagnose-cp.ps1` | 诊断 CP 注册状态与 CLSID | 输出注册表键值 |
+| `scripts\flush-cp-cache.ps1` | 强制刷新 Credential Provider 缓存 | 注销/重启生效 |
+| `scripts\troubleshoot-tile.ps1` | 排查 Tile 不显示的问题 | 检查注册表项 |
+
+---
+
 ## 项目结构
 
 ```

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getEmergency, addEmergency, deleteEmergency, validateAccount, type EmergencyAccount } from '../api'
 
 const accounts = ref<EmergencyAccount[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
+const usernameInputRef = ref<InstanceType<any> | null>(null)
 
 const form = ref({ username: '', password: '', sid: '', reason: '' })
 const validating = ref(false)
@@ -73,6 +74,17 @@ async function handleDelete(row: EmergencyAccount) {
   } catch (e: any) { ElMessage.error('操作失败: ' + e.message) }
 }
 
+async function handleDialogOpen() {
+  // 等待 DOM 更新后聚焦
+  await nextTick()
+  setTimeout(() => {
+    if (usernameInputRef.value) {
+      const inputEl = usernameInputRef.value.$refs.input || usernameInputRef.value
+      ;(inputEl as HTMLElement)?.focus?.()
+    }
+  }, 100)
+}
+
 onMounted(load)
 </script>
 
@@ -106,10 +118,10 @@ onMounted(load)
       </el-table>
     </div>
 
-    <el-dialog v-model="dialogVisible" title="新增应急账号" width="420px" :close-on-click-modal="false" @closed="resetForm">
+    <el-dialog v-model="dialogVisible" title="新增应急账号" width="420px" :close-on-click-modal="false" @closed="resetForm" @open="handleDialogOpen">
       <el-form label-width="70px" size="small">
         <el-form-item label="用户名">
-          <el-input v-model="form.username" placeholder="DOMAIN\admin 或 admin@domain.com" :disabled="validated" @keydown.enter="doValidate" />
+          <el-input ref="usernameInputRef" v-model="form.username" placeholder="DOMAIN\admin 或 admin@domain.com" :disabled="validated" @keydown.enter="doValidate" />
         </el-form-item>
         <el-form-item label="密码">
           <el-input v-model="form.password" type="password" show-password placeholder="域账号密码" :disabled="validated" @keydown.enter="doValidate" />

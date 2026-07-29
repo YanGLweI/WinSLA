@@ -41,34 +41,38 @@ fn run_policy_sync_loop(state: Arc<Mutex<ServiceState>>) -> Result<(), Box<dyn s
     use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, RegSetValueExW, HKEY_LOCAL_MACHINE};
     
     const SYNC_INTERVAL_SECS: u64 = 10;
-    let mut last_value: Option<bool> = None;
+    let mut last_default_tile: Option<bool> = None;
+    let mut last_emergency_reason: Option<bool> = None;
     
     loop {
         // Try to read policy from shared DB
-        let new_value = AuditDb::open()
+        let policy = AuditDb::open()
             .ok()
-            .as_ref()
-            .map(|db| db.get_policy())
-            .map(|policy| policy.default_tile_enabled);
+            .map(|db| db.get_policy());
         
-        // Only write to registry if value changed
-        if new_value != last_value {
-            if let Some(enabled) = new_value {
-                let result = write_registry_policy_key(enabled);
+        if let Some(policy) = policy {
+            let new_default_tile = Some(policy.default_tile_enabled);
+            let new_emergency_reason = Some(policy.emergency_requires_reason);
+            
+            // Only write to registry if any value changed
+            if new_default_tile != last_default_tile || new_emergency_reason != last_emergency_reason {
+                let result = write_registry_policy_key(policy.default_tile_enabled, policy.emergency_requires_reason);
                 match result {
                     Ok(_) => {
-                        log::info!("Policy synced to registry: default_tile_enabled={}", enabled);
-                        last_value = Some(enabled);
+                        log::info!("Policy synced to registry: default_tile_enabled={}, emergency_requires_reason={}",
+                            policy.default_tile_enabled, policy.emergency_requires_reason);
+                        last_default_tile = new_default_tile;
+                        last_emergency_reason = new_emergency_reason;
                     }
                     Err(e) => {
                         log::warn!("Failed to write registry key: {}", e);
                         // Continue syncing even if registry write fails (fail-safe)
                     }
                 }
-            } else {
-                // Can't open DB - log warning but continue
-                log::warn!("Cannot open audit DB for policy sync");
             }
+        } else {
+            // Can't open DB - log warning but continue
+            log::warn!("Cannot open audit DB for policy sync");
         }
         
         // Wait for next sync interval
@@ -76,8 +80,8 @@ fn run_policy_sync_loop(state: Arc<Mutex<ServiceState>>) -> Result<(), Box<dyn s
     }
 }
 
-/// Write policy configuration to Windows Registry under HKLM\SOFTWARE\WinSLA\Policy\DefaultTileEnabled
-fn write_registry_policy_key(default_tile_enabled: bool) -> Result<(), String> {
+/// Write policy configuration to Windows Registry under HKLM\SOFTWARE\WinSLA\Policy
+fn write_registry_policy_key(default_tile_enabled: bool, emergency_requires_reason: bool) -> Result<(), String> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::{ERROR_SUCCESS};
@@ -117,10 +121,28 @@ fn write_registry_policy_key(default_tile_enabled: bool) -> Result<(), String> {
         )
     };
     
+    if result2 != ERROR_SUCCESS {
+        unsafe { RegCloseKey(hkey); }
+        return Err(format!("Failed to write DefaultTileEnabled: {:?}", result2));
+    }
+    
+    // Write DWORD value EmergencyRequiresReason
+    let value_name2 = OsStr::new("EmergencyRequiresReason").encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let value_data2: [u8; 4] = (if emergency_requires_reason { 1u32 } else { 0u32 }).to_le_bytes();
+    let result3 = unsafe {
+        RegSetValueExW(
+            hkey,
+            windows::core::PCWSTR(value_name2.as_ptr()),
+            0,
+            windows::Win32::System::Registry::REG_VALUE_TYPE(4), // REG_DWORD
+            Some(&value_data2),
+        )
+    };
+    
     unsafe { RegCloseKey(hkey); }
     
-    if result2 != ERROR_SUCCESS {
-        return Err(format!("Failed to write registry value: {:?}", result2));
+    if result3 != ERROR_SUCCESS {
+        return Err(format!("Failed to write EmergencyRequiresReason: {:?}", result3));
     }
     
     Ok(())
