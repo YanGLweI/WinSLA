@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/language-Rust-orange" alt="Language" />
-  <img src="https://img.shields.io/badge/version-2.0.9-yellow" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.1.5-yellow" alt="Version" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
 </p>
 
@@ -31,6 +31,7 @@ WinSLA 是一个 Windows 系统级双账号认证登录代理。在 Active Direc
 - **服务桥接**：Windows Service 后台处理验证，CP 与服务通过 Named Pipe 安全通信
 - **失败锁定**：可配置的失败次数阈值与锁定时长，防止暴力破解
 - **应急覆盖**：支持授权管理员在紧急情况下单人登录（需填写原因并记录审计）
+- **离线缓存**：AD/LDAP网络不可达时可用本地缓存凭据进行应急验证（需预先配置）
 - **审计日志**：所有认证事件记录到本地数据库与日志
 - **集中管理**：管理端 GUI 提供仪表盘、配对规则、应急账号、审计日志、策略配置
 
@@ -201,106 +202,120 @@ net stop "WinSLA Service"
 
 应急账号需在管理端「应急账号」模块中预先配置。
 
+### 应急处理方式
+
+#### 场景一：服务进程意外崩溃
+
+如果 `winsla-service.exe` 因异常退出导致登录失败（双控/应急均无法使用）：
+
+1. **尝试重启服务**（无需注销或重启）：
+   ```powershell
+   # 以管理员身份运行
+   net start "WinSLA Service"
+   ```
+
+2. **如果服务无法启动**，检查事件查看器 → Windows 日志 → 应用程序中的错误信息。
+
+3. **临时禁用 WinSLA 恢复默认登录**：
+   ```powershell
+   # 方式一：禁用 Credential Provider
+   scripts\emergency-uninstall.ps1
+   
+   # 方式二：直接删除 CLSID 注册表项
+   reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider" /v "{WinSLA-CLSID}" /f
+   ```
+
+4. **重启系统**即可使用原始 AD 账号登录。
+
 ---
 
-## 应急处理指南
-
-### ⚠️ 场景一：WinSLA Service 崩溃导致无法登录
-
-**症状**：双控验证失败但无应急账号，或系统重启后问题复现。
-
-**解决方案**：
-
-1. **进入安全模式**（推荐）：
-   - 重启计算机，在 Windows 启动徽标出现前强制关机 3 次，进入「自动修复」界面
-   - 「高级选项」→「故障排除」→「高级选项」→「启动设置」→「重启」
-   - 按 `F4` 或 `4` 进入「安全模式」
-
-2. **临时启用默认 Tile**（快速恢复登录）：
-   - 以管理员身份打开 PowerShell 或 CMD
-   - 执行以下命令移除 WinSLA 的 Credential Provider：
-     ```powershell
-     Reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonSession" /v "{YOUR-WinSLA-CLSID}" /f
-     ```
-   - 或直接禁用 DefaultTile：
-     ```powershell
-     Set-ItemProperty -Path "HKLM:\SOFTWARE\WinSLA\Policy" -Name "DefaultTileEnabled" -Value 0
-     ```
-   - 重启后使用 Windows 原生登录界面进入系统
-
-3. **彻底修复**：
-   - 运行卸载脚本：`scripts\emergency-uninstall.ps1`
-   - 或手动删除服务：`sc.exe delete "WinSLA Service"`
-   - 删除 DLL：`Remove-Item "C:\Program Files\WinSLA\*.*" -Force`
-   - 重启
-
-### 🔐 场景二：应急账号被锁定或失效
-
-**解决方案**：
-
-1. **通过注册表紧急启用默认 Tile**：
-   - 进入安全模式（见上）
-   - 以管理员身份运行 PowerShell：
-     ```powershell
-     # 检查当前策略
-     Get-ItemProperty "HKLM:\SOFTWARE\WinSLA\Policy"
-
-     # 启用默认 Tile
-     Set-ItemProperty -Path "HKLM:\SOFTWARE\WinSLL\Policy" -Name "DefaultTileEnabled" -Value 1
-     
-     # 刷新 CP 缓存
-     & "$PSScriptRoot\scripts\flush-cp-cache.ps1"
-     ```
-
-2. **重新配置应急账号**：
-   - 启动管理端：`.	arget\release\winsla-management.exe`
-   - 在「应急账号」模块中添加/启用授权管理员
-
-### 🛡️ 场景三：Service 无法正常启动
-
-**诊断步骤**：
+#### 场景二：服务进程卡死或无响应
 
 ```powershell
-# 1. 检查服务状态
+# 强制停止服务
+taskkill /F /IM winsla-service.exe
+
+# 等待 CP 缓存刷新（约 5-10 秒），或直接重启资源管理器
+restart-appxprovisionedpackage –Online -PackageName Microsoft.Windows.ContentDeliveryPlatform_cw5n1h2txyewy
+restart-appxprovisionedpackage –Online -PackageName Microsoft.Win32WebViewHost_cw5n1h2txyewy
+
+# 或在任务管理器中结束 "Windows 资源管理器" 进程
+```
+
+---
+
+#### 场景三：AD/LDAP 网络不可达（域控制器离线）
+
+当域控制器不可达时，启用本地离线缓存验证：
+
+1. **管理端策略配置** → 启用「离线缓存"
+
+2. **确保应急账号已提前在离线缓存中预置凭据**（安装后首次登录需在线完成缓存初始化）
+
+3. **登录界面选择「应急登录」**，使用已缓存的应急账号凭证登录。
+
+> ⚠️ **重要提醒**：建议在虚拟机中测试所有应急方案！安装前创建系统快照，确保可以快速回滚。
+
+---
+
+#### 场景四：无法进入桌面（CP 注册导致系统不稳定）
+
+1. **进入安全模式**：
+   - 重启电脑，在登录界面出现前按 `F8`（或使用 Windows 恢复环境）
+   - 选择「带命令提示符的安全模式」
+
+2. **删除 CLSID 注册表项**：
+   ```cmd
+   reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider" /v "{WinSLA-CLSID}" /t REG_SZ /d "" /f
+   ```
+
+3. **或者运行应急卸载脚本**：
+   ```cmd
+   powershell -ExecutionPolicy Bypass -File scripts\emergency-recovery.ps1
+   ```
+
+4. **重启系统**恢复正常登录。
+
+---
+
+#### 场景五：需要完全卸载
+
+```powershell
+# PowerShell 脚本卸载
+scripts\unregister.ps1
+
+# 或手动卸载
+sc.exe delete "WinSLA Service"
+Remove-Item "C:\Program Files\WinSLA" -Recurse -Force
+reg delete "HKLM\SOFTWARE\WinSLA" /f
+```
+
+---
+
+### 调试与诊断
+
+#### 查看服务状态
+```powershell
 sc.exe query "WinSLA Service"
-
-# 2. 查看事件日志
-Get-EventLog -LogName Application -Source "WinSLA Service" -Newest 10
-
-# 3. 手动测试服务（前台调试模式）
-.	arget\release\winsla-service.exe
-
-# 4. 测试 Named Pipe 连接
-# 使用工具如 pipe_list + test client，或使用：
-call "C:\Program Files (x86)\Windows Kits\10\Debuggers x64\debug.exe"
-test \pipe\winsla-auth-pipe
+Get-Service -Name "WinSLA Service"
 ```
 
-**恢复措施**：
-
+#### 查看 CP 注册状态
 ```powershell
-# 重启服务
-net stop "WinSLA Service"
-net start "WinSLA Service"
-
-# 若失败，重新安装
-.\scripts\register-cp.ps1
-net start "WinSLA Service"
+# 64 位注册表视图
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider" /f "WinSLA" /s
 ```
 
-### 📋 常用运维脚本
-
-| 脚本 | 用途 | 注意事项 |
-|------|------|----------|
-| `scripts\emergency-recovery.ps1` | 一键禁用 DefaultTile，恢复 Windows 原生登录 | 需管理员权限 |
-| `scripts\emergency-uninstall.ps1` | 完全卸载 WinSLA（服务+CP+ 文件） | 不可逆操作 |
-| `scripts\diagnose-cp.ps1` | 诊断 CP 注册状态与 CLSID | 输出注册表键值 |
-| `scripts\flush-cp-cache.ps1` | 强制刷新 Credential Provider 缓存 | 注销/重启生效 |
-| `scripts\troubleshoot-tile.ps1` | 排查 Tile 不显示的问题 | 检查注册表项 |
+#### 查看审计日志
+```powershell
+# 管理端 → 审计日志模块
+# 或直接查询数据库
+sqlite3 "%ProgramFiles%\WinSLA\data\winsla.db" "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 20;"
+```
 
 ---
 
-## 项目结构
+### 常见问题
 
 ```
 WinSLA/
