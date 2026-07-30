@@ -47,6 +47,15 @@ pub struct AuditLogEntry {
     pub client_hostname: Option<String>,
 }
 
+/// Daily statistics for charts
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyStat {
+    pub date: String,
+    pub total: u64,
+    pub success: u64,
+    pub failed: u64,
+}
+
 /// Policy configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyConfig {
@@ -387,6 +396,31 @@ impl Database {
         })?;
 
         Ok(stats)
+    }
+
+    /// Get daily statistics for the last N days
+    pub fn get_daily_stats(&self, days: u32) -> SqliteResult<Vec<DailyStat>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DATE(timestamp) as date,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN result = 'success' THEN 1 ELSE 0 END) as success,
+                    SUM(CASE WHEN result != 'success' THEN 1 ELSE 0 END) as failed
+             FROM audit_log
+             WHERE timestamp >= DATE('now', 'localtime', '-' || ?1 || ' days')
+             GROUP BY DATE(timestamp)
+             ORDER BY date ASC",
+        )?;
+
+        let stats = stmt.query_map(params![days as i32], |row| {
+            Ok(DailyStat {
+                date: row.get(0)?,
+                total: row.get(1)?,
+                success: row.get(2).unwrap_or(0),
+                failed: row.get(3).unwrap_or(0),
+            })
+        })?;
+
+        stats.collect()
     }
 
     // ========================================================================

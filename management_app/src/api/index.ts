@@ -51,6 +51,18 @@ export interface AuditEntry {
   client_hostname: string | null
 }
 
+export interface DailyStat {
+  date: string
+  total: number
+  success: number
+  failed: number
+}
+
+export interface ComputerInfo {
+  hostname: string
+  domain: string
+}
+
 export interface PolicyConfig {
   max_retry_count: number
   auth_timeout_secs: number
@@ -85,6 +97,8 @@ export const getEmergency = () => api.get<EmergencyAccount[]>('/emergency')
 export const addEmergency = (data: Partial<EmergencyAccount>) => api.post('/emergency', data)
 export const deleteEmergency = (id: string) => api.delete(`/emergency/${id}`)
 export const getAudit = (limit = 50) => api.get<AuditEntry[]>('/audit', { params: { limit } })
+export const getDailyStats = () => api.get<DailyStat[]>('/stats/daily')
+export const getComputerInfo = () => api.get<ComputerInfo>('/computer-info')
 export const getPolicy = () => api.get<PolicyConfig>('/policy')
 export const updatePolicy = (data: PolicyConfig) => api.put('/policy', data)
 export const startService = () => api.post<ServiceActionResult>('/service/start')

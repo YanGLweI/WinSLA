@@ -11,12 +11,19 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::database::Database;
+use crate::database::{Database, DailyStat};
 use crate::commands;
 
 const SERVICE_NAME: &str = "WinSLA Service";
 
 pub type AppState = Arc<Mutex<Database>>;
+
+/// Computer information response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComputerInfo {
+    pub hostname: String,
+    pub domain: String,
+}
 
 /// Create the axum router with all API routes
 pub fn create_router(db: AppState) -> Router {
@@ -27,6 +34,8 @@ pub fn create_router(db: AppState) -> Router {
         .route("/api/emergency", get(list_emergency).post(add_emergency))
         .route("/api/emergency/{id}", delete(delete_emergency))
         .route("/api/audit", get(list_audit))
+        .route("/api/stats/daily", get(get_daily_stats))
+        .route("/api/computer-info", get(get_computer_info))
         .route("/api/policy", get(get_policy).put(update_policy))
         .route("/api/service/start", post(service_start))
         .route("/api/service/stop", post(service_stop))
@@ -222,6 +231,53 @@ async fn list_audit(State(db): State<AppState>, Query(q): Query<AuditQuery>) -> 
         Ok(entries) => Json(entries).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+}
+
+async fn get_daily_stats(State(db): State<AppState>) -> impl IntoResponse {
+    let db = db.lock().unwrap();
+    match db.get_daily_stats(7) {
+        Ok(stats) => Json(stats).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn get_computer_info() -> Json<ComputerInfo> {
+    use std::env;
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    
+    // Get computer name (hostname)
+    let hostname = env::var("COMPUTERNAME")
+        .unwrap_or_else(|_| "Unknown".to_string());
+    
+    // Get domain/workgroup
+    let mut domain = String::from("WORKGROUP");
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::{
+            GetComputerNameExW, COMPUTER_NAME_FORMAT,
+        };
+        
+        // ComputerNameDnsDomain = 2
+        let mut size: u32 = 0;
+        let _ = unsafe { GetComputerNameExW(COMPUTER_NAME_FORMAT(2), windows::core::PWSTR::null(), &mut size) };
+        
+        if size > 0 {
+            let mut buf: Vec<u16> = vec![0; size as usize];
+            let ok = unsafe {
+                GetComputerNameExW(
+                    COMPUTER_NAME_FORMAT(2),
+                    windows::core::PWSTR(buf.as_mut_ptr()),
+                    &mut size,
+                )
+            };
+            if ok.is_ok() && size > 0 {
+                domain = String::from_utf16_lossy(&buf[..size as usize]);
+            }
+        }
+    }
+    
+    Json(ComputerInfo { hostname, domain })
 }
 
 async fn get_policy(State(db): State<AppState>) -> impl IntoResponse {
@@ -479,7 +535,7 @@ async fn validate_account(Json(req): Json<ValidateAccountRequest>) -> Json<Valid
             success: true,
             sid,
             display_name: display_name.clone(),
-            message: format!("验证成功: {}", display_name),
+            message: format!("验证成功：{}", display_name),
         }),
         Ok(Ok(Err(msg))) => Json(ValidateAccountResponse {
             success: false,
@@ -497,7 +553,7 @@ async fn validate_account(Json(req): Json<ValidateAccountRequest>) -> Json<Valid
             success: false,
             sid: String::new(),
             display_name: String::new(),
-            message: "验证超时：无法连接域控制器（30秒）".to_string(),
+            message: "验证超时：无法连接域控制器（30 秒）".to_string(),
         }),
     }
 }
