@@ -201,9 +201,10 @@ async fn handle_client(
     let request: AuthRequest = serde_json::from_slice(&buf)?;
 
     log::info!(
-        "Processing auth request: {} <-> {}",
+        "Processing auth request: {} <-> {} (source: {})",
         request.user_a_username,
-        request.user_b_username
+        request.user_b_username,
+        request.logon_source
     );
 
     // Process authentication
@@ -259,7 +260,7 @@ async fn process_dual_auth(request: &AuthRequest) -> AuthResponse {
         if let Some(secs) = d.get_lock_remaining_secs(&account) {
             log::warn!("Login rejected: account {} is locked ({}s remaining)", account, secs);
             let _ = d.record_auth(&account, &approver, "locked_attempt",
-                Some("账号处于锁定期，本次尝试被拒绝"), None);
+                Some("账号处于锁定期，本次尝试被拒绝"), Some(&request.logon_source));
             return AuthResponse::Locked { remaining_secs: secs };
         }
     }
@@ -272,7 +273,7 @@ async fn process_dual_auth(request: &AuthRequest) -> AuthResponse {
         Err(auth::AuthError::InvalidCredentials(msg)) => {
             log::warn!("Pairing rule rejected login: {}", msg);
             if let Some(d) = &db {
-                let _ = d.record_auth(&account, &approver, "pairing_violation", Some(&msg), None);
+                let _ = d.record_auth(&account, &approver, "pairing_violation", Some(&msg), Some(&request.logon_source));
             }
             // Pairing violations count toward the lockout threshold
             return record_failure_and_build_response(&db, &account, &policy,
@@ -294,12 +295,12 @@ async fn process_dual_auth(request: &AuthRequest) -> AuthResponse {
     .await;
 
     let response = match result {
-        Ok(()) => {
-            log::info!("Authentication successful for {} + {}", account, approver);
+        Ok(canonical) => {
+            log::info!("Authentication successful for {} + {} (canonical: {})", account, approver, canonical);
             if let Some(d) = &db {
                 d.reset_login_failures(&account);
             }
-            AuthResponse::Success
+            AuthResponse::Success { canonical_username: canonical }
         }
         Err(e) => {
             let base = match e {
@@ -331,7 +332,7 @@ async fn process_dual_auth(request: &AuthRequest) -> AuthResponse {
     // Write audit record to shared SQLite database
     let (result_str, error_msg) = describe_response(&response);
     if let Some(d) = &db {
-        if let Err(e) = d.record_auth(&account, &approver, result_str, error_msg.as_deref(), None) {
+        if let Err(e) = d.record_auth(&account, &approver, result_str, error_msg.as_deref(), Some(&request.logon_source)) {
             log::warn!("Failed to write audit record to DB: {}", e);
         }
     }
@@ -356,7 +357,7 @@ async fn process_emergency_auth(request: &AuthRequest) -> AuthResponse {
 
     // 1. Policy switch
     if !policy.allow_emergency_override {
-        let _ = db.record_auth(&username, "", "emergency_denied", Some("应急覆盖已被策略禁用"), None);
+        let _ = db.record_auth(&username, "", "emergency_denied", Some("应急覆盖已被策略禁用"), Some(&request.logon_source));
         return AuthResponse::EmergencyDenied("应急覆盖已被管理员禁用".to_string());
     }
 
@@ -367,7 +368,7 @@ async fn process_emergency_auth(request: &AuthRequest) -> AuthResponse {
 
     // 3. Lockout applies to emergency accounts too
     if let Some(secs) = db.get_lock_remaining_secs(&username) {
-        let _ = db.record_auth(&username, "", "locked_attempt", Some("应急账号处于锁定期"), None);
+        let _ = db.record_auth(&username, "", "locked_attempt", Some("应急账号处于锁定期"), Some(&request.logon_source));
         return AuthResponse::Locked { remaining_secs: secs };
     }
 
@@ -379,7 +380,7 @@ async fn process_emergency_auth(request: &AuthRequest) -> AuthResponse {
     });
     if !matched {
         let msg = format!("账号 '{}' 未被授权应急登录", username);
-        let _ = db.record_auth(&username, "", "emergency_denied", Some(&msg), None);
+        let _ = db.record_auth(&username, "", "emergency_denied", Some(&msg), Some(&request.logon_source));
         return AuthResponse::EmergencyDenied(msg);
     }
 
@@ -390,18 +391,18 @@ async fn process_emergency_auth(request: &AuthRequest) -> AuthResponse {
     }).await;
 
     match verify {
-        Ok(Ok(())) => {
+        Ok(Ok(canonical)) => {
             db.reset_login_failures(&username);
             let audit_msg = format!("应急登录批准，原因：{}", reason);
-            let _ = db.record_auth(&username, "", "emergency_override", Some(&audit_msg), None);
-            log::warn!("EMERGENCY OVERRIDE APPROVED: user={}, reason={}", username, reason);
-            AuthResponse::Success
+            let _ = db.record_auth(&username, "", "emergency_override", Some(&audit_msg), Some(&request.logon_source));
+            log::warn!("EMERGENCY OVERRIDE APPROVED: user={}, reason={} (canonical: {})", username, reason, canonical);
+            AuthResponse::Success { canonical_username: canonical }
         }
         Ok(Err(e)) => {
             let (remaining, locked) = db.record_login_failure(
                 &username, policy.max_retry_count, policy.lockout_duration_minutes);
             let _ = db.record_auth(&username, "", "emergency_denied",
-                Some(&format!("密码验证失败：{}", e)), None);
+                Some(&format!("密码验证失败：{}", e)), Some(&request.logon_source));
             if let Some(secs) = locked {
                 return AuthResponse::Locked { remaining_secs: secs };
             }
@@ -446,7 +447,7 @@ fn with_attempts_hint(msg: String, remaining: u32) -> String {
 /// Map a response to (audit_result_str, error_message)
 fn describe_response(response: &AuthResponse) -> (&'static str, Option<String>) {
     match response {
-        AuthResponse::Success => ("success", None),
+        AuthResponse::Success { .. } => ("success", None),
         AuthResponse::FailUserA(msg) => ("fail_user_a", Some(msg.clone())),
         AuthResponse::FailUserB(msg) => ("fail_user_b", Some(msg.clone())),
         AuthResponse::BothFailed(a, b) => ("fail_both", Some(format!("{}; {}", a, b))),

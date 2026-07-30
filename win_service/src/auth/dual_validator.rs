@@ -5,13 +5,15 @@ use crate::auth::{AuthError, AuthResult};
 use crate::audit::AuditDb;
 use log::{debug, error, info, warn};
 
-/// Validate two accounts' credentials concurrently using real Windows logon
+/// Validate two accounts' credentials concurrently using real Windows logon.
+/// On success returns the canonical logon name ("DOMAIN\user") of user A,
+/// which the Credential Provider must serialize verbatim for LSA.
 pub async fn validate_dual_accounts(
     user_a_username: &str,
     user_a_password: &str,
     user_b_username: &str,
     user_b_password: &str,
-) -> Result<(), AuthError> {
+) -> Result<String, AuthError> {
     debug!("Starting dual account verification for {} and {}",
            user_a_username, user_b_username);
 
@@ -29,9 +31,9 @@ pub async fn validate_dual_accounts(
     let user_b_result = handle_b.map_err(|e| AuthError::ServiceError(format!("verify task failed: {}", e)))?;
 
     match (user_a_result, user_b_result) {
-        (Ok(_), Ok(_)) => {
+        (Ok(canonical_a), Ok(_)) => {
             info!("Both users authenticated successfully");
-            Ok(())
+            Ok(canonical_a)
         }
         (Err(ea), Ok(_)) => {
             error!("User A failed: {}", ea);
@@ -49,12 +51,13 @@ pub async fn validate_dual_accounts(
 }
 
 /// Verify a Windows account password with LogonUserW (network logon type).
+/// On success returns the canonical logon name ("DOMAIN\user") of the account.
 ///
 /// Supported username formats:
 ///   "DOMAIN\\user"        -> domain=DOMAIN, user=user
 ///   "user@domain.suffix"  -> UPN, passed as-is with NULL domain
 ///   "user"                -> local account database (NULL domain)
-pub fn verify_password_windows(username: &str, password: &str) -> Result<(), AuthError> {
+pub fn verify_password_windows(username: &str, password: &str) -> Result<String, AuthError> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Security::{
@@ -104,7 +107,9 @@ pub fn verify_password_windows(username: &str, password: &str) -> Result<(), Aut
             unsafe {
                 let _ = CloseHandle(handle);
             }
-            Ok(())
+            let canonical = canonical_logon_name(username);
+            debug!("Canonical logon name for '{}': '{}'", username, canonical);
+            Ok(canonical)
         }
         Err(e) => {
             // HRESULT_FROM_WIN32: low 16 bits carry the Win32 error code
@@ -114,6 +119,170 @@ pub fn verify_password_windows(username: &str, password: &str) -> Result<(), Aut
             Err(AuthError::InvalidCredentials(map_logon_error(win32_code)))
         }
     }
+}
+
+// ─── Canonical logon name resolution (RDP serialization fix) ──────────────
+
+#[link(name = "netapi32")]
+extern "system" {
+    fn NetGetJoinInformation(
+        server: *const u16,
+        name_buffer: *mut *mut u16,
+        buffer_type: *mut u32,
+    ) -> u32;
+    fn NetApiBufferFree(buffer: *mut core::ffi::c_void) -> u32;
+}
+
+/// Resolve the authoritative "DOMAIN\user" logon name for a successfully
+/// verified credential, so the Credential Provider can serialize exactly the
+/// account that was validated (the CP must never rebuild the domain prefix -
+/// that was the root cause of RDP logons being rejected by LSA):
+///   "DOMAIN\user"  -> returned as-is (explicit domain was used for verification)
+///   "user@domain"  -> resolved to DOMAIN\sAMAccountName via account lookup
+///   "user"         -> local SAM hit: "MACHINE\user"; otherwise "JOINED_DOMAIN\user"
+fn canonical_logon_name(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.contains('\\') {
+        return trimmed.to_string();
+    }
+    if trimmed.contains('@') {
+        if let Some((name, domain)) = resolve_account_name(None, trimmed) {
+            return format!("{}\\{}", domain, name);
+        }
+        return trimmed.to_string();
+    }
+    // Bare name: LogonUserW with NULL domain validates against the local SAM
+    // first, so mirror that order here before falling back to the joined domain.
+    if let Some((name, domain)) = resolve_account_name(Some("."), trimmed) {
+        return format!("{}\\{}", domain, name);
+    }
+    if let Some(domain) = joined_domain_name() {
+        return format!("{}\\{}", domain, trimmed);
+    }
+    trimmed.to_string()
+}
+
+/// Look up an account and return its canonical (sAMAccountName, domain) pair.
+/// `system`: Some(".") restricts the lookup to the local account database;
+/// None searches the local machine first, then trusted domains.
+fn resolve_account_name(system: Option<&str>, account: &str) -> Option<(String, String)> {
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Security::{LookupAccountNameW, LookupAccountSidW, PSID, SID_NAME_USE};
+
+    let account_w: Vec<u16> = account.encode_utf16().chain(std::iter::once(0)).collect();
+    let system_w: Vec<u16> = system
+        .map(|s| s.encode_utf16().chain(std::iter::once(0)).collect())
+        .unwrap_or_default();
+    let system_pcwstr = if system.is_some() {
+        PCWSTR(system_w.as_ptr())
+    } else {
+        PCWSTR::null()
+    };
+
+    // Step 1: resolve the name to a SID (two-call sizing pattern)
+    let mut cb_sid: u32 = 0;
+    let mut cch_domain: u32 = 0;
+    let mut sid_use = SID_NAME_USE(0);
+    let _ = unsafe {
+        LookupAccountNameW(
+            system_pcwstr,
+            PCWSTR(account_w.as_ptr()),
+            PSID::default(),
+            &mut cb_sid,
+            PWSTR::null(),
+            &mut cch_domain,
+            &mut sid_use,
+        )
+    };
+    if cb_sid == 0 {
+        return None;
+    }
+
+    let mut sid_buf = vec![0u8; cb_sid as usize];
+    let mut domain_buf = vec![0u16; cch_domain as usize];
+    let found = unsafe {
+        LookupAccountNameW(
+            system_pcwstr,
+            PCWSTR(account_w.as_ptr()),
+            PSID(sid_buf.as_mut_ptr() as *mut core::ffi::c_void),
+            &mut cb_sid,
+            PWSTR(domain_buf.as_mut_ptr()),
+            &mut cch_domain,
+            &mut sid_use,
+        )
+    };
+    if found.is_err() {
+        return None;
+    }
+
+    // Step 2: resolve the SID back to the canonical (name, domain) pair
+    let mut cch_name: u32 = 0;
+    let mut cch_domain2: u32 = 0;
+    let _ = unsafe {
+        LookupAccountSidW(
+            system_pcwstr,
+            PSID(sid_buf.as_mut_ptr() as *mut core::ffi::c_void),
+            PWSTR::null(),
+            &mut cch_name,
+            PWSTR::null(),
+            &mut cch_domain2,
+            &mut sid_use,
+        )
+    };
+    if cch_name == 0 {
+        return None;
+    }
+    let mut name_buf = vec![0u16; cch_name as usize];
+    let mut domain_buf2 = vec![0u16; cch_domain2 as usize];
+    let resolved = unsafe {
+        LookupAccountSidW(
+            system_pcwstr,
+            PSID(sid_buf.as_mut_ptr() as *mut core::ffi::c_void),
+            PWSTR(name_buf.as_mut_ptr()),
+            &mut cch_name,
+            PWSTR(domain_buf2.as_mut_ptr()),
+            &mut cch_domain2,
+            &mut sid_use,
+        )
+    };
+    if resolved.is_err() {
+        return None;
+    }
+
+    let name_end = name_buf.iter().position(|&c| c == 0).unwrap_or(name_buf.len());
+    let domain_end = domain_buf2.iter().position(|&c| c == 0).unwrap_or(domain_buf2.len());
+    let name = String::from_utf16_lossy(&name_buf[..name_end]);
+    let domain = String::from_utf16_lossy(&domain_buf2[..domain_end]);
+    if name.is_empty() || domain.is_empty() {
+        return None;
+    }
+    Some((name, domain))
+}
+
+/// NetBIOS name of the domain this machine is joined to, or None for
+/// workgroup machines. The NetGetJoinInformation buffer type must be
+/// NetSetupDomainName(3) - a workgroup name is NOT a valid logon domain and
+/// must never be prefixed onto the username (RDP "WORKGROUP\user" bug).
+fn joined_domain_name() -> Option<String> {
+    let mut name_buf: *mut u16 = std::ptr::null_mut();
+    let mut buf_type: u32 = 0;
+    let status = unsafe { NetGetJoinInformation(std::ptr::null(), &mut name_buf, &mut buf_type) };
+    if status != 0 || name_buf.is_null() {
+        return None;
+    }
+    let domain = unsafe {
+        let mut len = 0usize;
+        while *name_buf.add(len) != 0 {
+            len += 1;
+        }
+        String::from_utf16_lossy(std::slice::from_raw_parts(name_buf, len))
+    };
+    unsafe { NetApiBufferFree(name_buf as *mut core::ffi::c_void) };
+    // NETSETUP_JOIN_STATUS: 0=Unknown 1=Unjoined 2=WorkgroupName 3=DomainName
+    if buf_type != 3 || domain.is_empty() {
+        return None;
+    }
+    Some(domain)
 }
 
 /// Map common Win32 logon error codes to user-facing Chinese messages

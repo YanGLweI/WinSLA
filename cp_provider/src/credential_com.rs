@@ -477,9 +477,10 @@ unsafe extern "system" fn cred_get_serialization(
 ) -> i32 {
     let c = &mut *(this as *mut DualAuthCredentialCom);
 
+    let (session_id, is_remote) = logon_environment();
     crate::provider_com::trace(&format!(
-        "Credential::GetSerialization tile={:?} user_a='{}' user_b='{}'",
-        c.tile_type,
+        "Credential::GetSerialization tile={:?} session={} remote={} user_a='{}' user_b='{}'",
+        c.tile_type, session_id, is_remote,
         wide_to_string(&c.user_a_name), wide_to_string(&c.user_b_name)
     ));
 
@@ -527,19 +528,30 @@ unsafe fn serialize_dual(
 
     // Send dual-auth request to service via pipe
     use crate::com_types::{AuthRequest, AuthResponse};
-    let request = AuthRequest::new_dual(&user_a, &pass_a, &user_b, &pass_b);
+    let request = AuthRequest::new_dual(&user_a, &pass_a, &user_b, &pass_b, &logon_source_tag());
 
     crate::provider_com::trace("GetSerialization(dual): connecting to pipe...");
     let auth_result = crate::pipe_client::send_auth_request(&request);
     crate::provider_com::trace(&format!("GetSerialization(dual): pipe ok={:?}", auth_result.is_ok()));
 
     match auth_result {
-        Ok(AuthResponse::Success) => {
+        Ok(AuthResponse::Success { canonical_username }) => {
+            // Use the service-canonicalized logon name verbatim (RDP fix): the
+            // service validated this exact account; rebuilding the domain here
+            // previously made LSA reject RDP logons (local accounts, ".\user"
+            // input, UPNs and trusted domains all got the joined-domain prefix).
+            let logon_name = if canonical_username.trim().is_empty() {
+                user_a.clone()
+            } else {
+                canonical_username
+            };
             c.auth_success = true;
-            c.serialized_user = to_wide(&user_a);
+            c.serialized_user = to_wide(&logon_name);
             c.serialized_pass = Zeroizing::new(to_wide(&pass_a));
-            crate::provider_com::trace("GetSerialization(dual): AUTH SUCCESS");
-            fill_serialization(serialization, &user_a, &pass_a);
+            crate::provider_com::trace(&format!(
+                "GetSerialization(dual): AUTH SUCCESS canonical='{}'", logon_name
+            ));
+            fill_serialization(serialization, &logon_name, &pass_a);
             log_serialization_bytes("GetSerialization(dual success) FINAL struct", serialization);
             // IMPORTANT: When returning CREDENTIAL_FINISHED, status_text MUST be NULL
             // and status_icon MUST be CPSI_NONE (0) per Microsoft documentation.
@@ -609,19 +621,26 @@ unsafe fn serialize_emergency(
     }
 
     use crate::com_types::{AuthRequest, AuthResponse};
-    let request = AuthRequest::new_emergency(&user, &pass, reason.trim());
+    let request = AuthRequest::new_emergency(&user, &pass, reason.trim(), &logon_source_tag());
 
     crate::provider_com::trace("GetSerialization(emergency): connecting to pipe...");
     let auth_result = crate::pipe_client::send_auth_request(&request);
     crate::provider_com::trace(&format!("GetSerialization(emergency): pipe ok={:?}", auth_result.is_ok()));
 
     match auth_result {
-        Ok(AuthResponse::Success) => {
+        Ok(AuthResponse::Success { canonical_username }) => {
+            let logon_name = if canonical_username.trim().is_empty() {
+                user.clone()
+            } else {
+                canonical_username
+            };
             c.auth_success = true;
-            c.serialized_user = to_wide(&user);
+            c.serialized_user = to_wide(&logon_name);
             c.serialized_pass = Zeroizing::new(to_wide(&pass));
-            crate::provider_com::trace("GetSerialization(emergency): OVERRIDE APPROVED");
-            fill_serialization(serialization, &user, &pass);
+            crate::provider_com::trace(&format!(
+                "GetSerialization(emergency): OVERRIDE APPROVED canonical='{}'", logon_name
+            ));
+            fill_serialization(serialization, &logon_name, &pass);
             log_serialization_bytes("GetSerialization(emergency success) FINAL struct", serialization);
             set_empty_status(status_text);
             *status_icon = 0;
@@ -656,7 +675,7 @@ unsafe fn serialize_emergency(
 
 unsafe extern "system" fn cred_report_result(
     this: *mut c_void, ntstatus: i32, substatus: i32,
-    _status_text: *mut *mut u16, _status_icon: *mut u32,
+    status_text: *mut *mut u16, status_icon: *mut u32,
 ) -> i32 {
     crate::provider_com::trace(&format!(
         "ReportResult: ntstatus=0x{:08X} substatus=0x{:08X}",
@@ -679,8 +698,25 @@ unsafe extern "system" fn cred_report_result(
         crate::provider_com::trace(
             "ReportResult: logon failed, cleared cached auth_success so fields are re-read on next submit",
         );
+        // Surface a specific reason on the tile instead of LogonUI's generic
+        // "user name or password is incorrect" (crucial for RDP diagnostics).
+        let msg = map_ntstatus_logon_error(ntstatus as u32);
+        crate::provider_com::trace(&format!("ReportResult: {}", msg));
+        set_status(c, status_text, status_icon, &msg, CPSI_ERROR);
     }
     0 // S_OK - acknowledge the result
+}
+
+/// Map common logon failure NTSTATUS codes to user-facing Chinese messages.
+fn map_ntstatus_logon_error(ntstatus: u32) -> String {
+    match ntstatus {
+        0xC0000064 => "账号不存在，请检查用户名格式（域名\\用户名）".to_string(),
+        0xC000006A => "Windows 拒绝了该密码".to_string(),
+        0xC0000070 => "该账号不允许从这台计算机登录（工作站限制）".to_string(),
+        0xC0000071 | 0xC0000224 => "密码已过期或必须更改密码".to_string(),
+        0xC000015B => "未授予此登录类型的权限".to_string(),
+        other => format!("Windows 登录失败 (0x{:08X})", other),
+    }
 }
 
 // ─── ICredentialProviderCredentialWithFieldOptions (nested stub) ──
@@ -743,6 +779,29 @@ unsafe extern "system" fn so_get_submission_options(
 fn wide_to_string(wide: &[u16]) -> String {
     let len = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
     String::from_utf16_lossy(&wide[..len])
+}
+
+const SM_REMOTESESSION: i32 = 0x1000;
+
+/// Identify the logon environment for diagnostics and audit tagging.
+/// Returns (session_id, is_remote_desktop).
+pub(crate) fn logon_environment() -> (u32, bool) {
+    let mut session_id: u32 = 0;
+    unsafe {
+        let _ = ProcessIdToSessionId(std::process::id(), &mut session_id);
+    }
+    let is_remote = unsafe { GetSystemMetrics(SM_REMOTESESSION) } != 0;
+    (session_id, is_remote)
+}
+
+/// Audit tag for the current logon source: "console" or "rdp-session-N".
+pub(crate) fn logon_source_tag() -> String {
+    let (session_id, is_remote) = logon_environment();
+    if is_remote {
+        format!("rdp-session-{}", session_id)
+    } else {
+        "console".to_string()
+    }
 }
 
 unsafe fn set_status(
@@ -823,6 +882,12 @@ extern "system" {
 extern "system" {
     fn GetCurrentProcess() -> isize;
     fn CloseHandle(handle: isize) -> i32;
+    fn ProcessIdToSessionId(process_id: u32, session_id: *mut u32) -> i32;
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn GetSystemMetrics(n_index: i32) -> i32;
 }
 
 #[link(name = "netapi32")]
@@ -932,6 +997,15 @@ unsafe fn get_netbios_domain() -> String {
     }
     let result = wide_ptr_to_string(name_buf);
     NetApiBufferFree(name_buf as *mut c_void);
+    // NETSETUP_JOIN_STATUS: 0=Unknown 1=Unjoined 2=WorkgroupName 3=DomainName.
+    // Only a real domain join yields a usable logon domain - a workgroup name
+    // must never be prefixed onto the username (RDP "WORKGROUP\user" bug).
+    if buf_type != 3 {
+        crate::provider_com::trace(&format!(
+            "NetGetJoinInformation: not domain-joined (type={}), ignoring '{}'", buf_type, result
+        ));
+        return String::new();
+    }
     crate::provider_com::trace(&format!("NetGetJoinInformation: domain='{}' type={}", result, buf_type));
     result
 }
@@ -984,23 +1058,22 @@ unsafe fn fill_serialization(serialization: *mut c_void, username: &str, passwor
     let base = serialization as *mut u8;
     std::ptr::write_bytes(base, 0, std::mem::size_of::<CredSerialization>());
 
-    // Extract bare username (strip domain prefix or UPN suffix)
-    let bare_user = if let Some(pos) = username.find('\\') {
-        &username[pos + 1..]
-    } else if let Some(pos) = username.find('@') {
-        &username[..pos]
+    // The caller passes the service-canonicalized logon name ("DOMAIN\user",
+    // "MACHINE\user" or a UPN). Pack it VERBATIM - rebuilding the domain here
+    // was the root cause of LSA rejecting RDP logons (local accounts became
+    // "WORKGROUP\user", and ".\user" / UPN / trusted-domain input was silently
+    // rewritten to the machine's joined domain).
+    let fq_user = if username.contains('\\') || username.contains('@') {
+        username.to_string()
     } else {
-        username
-    };
-
-    // Get NetBIOS domain name (e.g. "HOT") via NetGetJoinInformation
-    let domain = get_netbios_domain();
-
-    // Construct fully-qualified username: "DOMAIN\user"
-    let fq_user = if domain.is_empty() {
-        bare_user.to_string()
-    } else {
-        format!("{}\\{}", domain, bare_user)
+        // Defensive fallback for bare names without canonical info (legacy
+        // service): prefix only a real joined domain, never a workgroup name.
+        let domain = get_netbios_domain();
+        if domain.is_empty() {
+            username.to_string()
+        } else {
+            format!("{}\\{}", domain, username)
+        }
     };
 
     crate::provider_com::trace(&format!(

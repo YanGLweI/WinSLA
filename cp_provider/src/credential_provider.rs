@@ -24,6 +24,7 @@ pub fn submit_credentials(credential: &mut DualAuthCredential) -> Result<AuthRes
         &credential.user_a_password,
         &credential.user_b_username,
         &credential.user_b_password,
+        &crate::credential_com::logon_source_tag(),
     );
 
     // Send to service via named pipe
@@ -32,7 +33,7 @@ pub fn submit_credentials(credential: &mut DualAuthCredential) -> Result<AuthRes
 
     // Update credential state based on response
     match &response {
-        AuthResponse::Success => {
+        AuthResponse::Success { .. } => {
             credential.mark_verified();
         }
         AuthResponse::FailUserA(msg) => {

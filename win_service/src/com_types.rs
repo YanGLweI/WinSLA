@@ -32,6 +32,8 @@ pub struct AuthRequest {
     pub user_b_password: String,
     /// Emergency: reason for override; Dual: empty
     pub reason: String,
+    /// Logon source reported by the CP: "console" or "rdp-session-N" (audit only)
+    pub logon_source: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
@@ -42,6 +44,7 @@ impl AuthRequest {
         user_a_password: &str,
         user_b_username: &str,
         user_b_password: &str,
+        logon_source: &str,
     ) -> Self {
         AuthRequest {
             request_id: Uuid::new_v4(),
@@ -51,12 +54,13 @@ impl AuthRequest {
             user_b_username: user_b_username.to_lowercase(),
             user_b_password: user_b_password.to_string(),
             reason: String::new(),
+            logon_source: logon_source.to_string(),
             timestamp: chrono::Utc::now(),
         }
     }
 
     /// Create an emergency override authentication request
-    pub fn new_emergency(username: &str, password: &str, reason: &str) -> Self {
+    pub fn new_emergency(username: &str, password: &str, reason: &str, logon_source: &str) -> Self {
         AuthRequest {
             request_id: Uuid::new_v4(),
             mode: AuthMode::Emergency,
@@ -65,6 +69,7 @@ impl AuthRequest {
             user_b_username: String::new(),
             user_b_password: String::new(),
             reason: reason.to_string(),
+            logon_source: logon_source.to_string(),
             timestamp: chrono::Utc::now(),
         }
     }
@@ -73,8 +78,11 @@ impl AuthRequest {
 /// Response sent from Service back to CP
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuthResponse {
-    /// Dual auth succeeded OR emergency override approved
-    Success,
+    /// Dual auth succeeded OR emergency override approved.
+    /// `canonical_username` is the service-canonicalized logon name
+    /// ("DOMAIN\user" / "MACHINE\user") that the CP must serialize verbatim
+    /// for LSA - never rebuild the domain prefix on the CP side.
+    Success { canonical_username: String },
     FailUserA(String),      // Error message for primary account failure
     FailUserB(String),      // Error message for approver failure
     BothFailed(String, String),
@@ -89,6 +97,6 @@ pub enum AuthResponse {
 impl AuthResponse {
     /// Check if authentication was successful
     pub fn is_success(&self) -> bool {
-        matches!(self, AuthResponse::Success)
+        matches!(self, AuthResponse::Success { .. })
     }
 }
