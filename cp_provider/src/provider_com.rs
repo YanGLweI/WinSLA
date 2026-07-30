@@ -26,6 +26,19 @@ use crate::credential_com::{DualAuthCredentialCom, TileType};
 // Registry policy key path for reading default_tile_enabled setting
 const REGISTRY_POLICY_KEY: &str = r"SOFTWARE\WinSLA\Policy";
 
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn GetSystemMetrics(nindex: i32) -> i32;
+}
+const SM_REMOTESESSION_VALUE: i32 = 0x1000;
+
+/// Returns true when the current session is a remote (RDP) session.
+/// LogonUI runs inside the session it displays UI for, so this reflects
+/// the session being logged on to / unlocked.
+fn is_remote_session() -> bool {
+    unsafe { GetSystemMetrics(SM_REMOTESESSION_VALUE) != 0 }
+}
+
 // ICredentialProvider IID: {d27c3481-5a1c-45b2-8aaa-c20ebbe8229e}
 pub const IID_ICREDENTIAL_PROVIDER: GUID = GUID {
     data1: 0xd27c3481,
@@ -153,6 +166,7 @@ pub struct DualAuthProviderCom {
     pub vtable: *const ProviderVTable,
     pub ref_count: AtomicU32,
     pub usage_scenario: u32,
+    pub remote_session: bool,     // true when LogonUI runs in an RDP session
     pub events: *mut c_void,       // ICredentialProviderEvents callback
     pub advise_context: usize,
     pub credential_dual: *mut c_void,       // Dual-control tile (index 0)
@@ -217,6 +231,7 @@ impl DualAuthProviderCom {
             vtable: &PROVIDER_VTABLE,
             ref_count: AtomicU32::new(1),
             usage_scenario: 0,
+            remote_session: false,
             events: std::ptr::null_mut(),
             advise_context: 0,
             credential_dual: std::ptr::null_mut(),
@@ -338,6 +353,8 @@ unsafe extern "system" fn provider_set_usage_scenario(
     if cpus == CPUS_LOGON || cpus == CPUS_UNLOCK_WORKSTATION {
         let provider = &mut *(this as *mut DualAuthProviderCom);
         provider.usage_scenario = cpus;
+        provider.remote_session = is_remote_session();
+        trace(&format!("Provider::SetUsageScenario remote_session={}", provider.remote_session));
         0 // S_OK
     } else {
         -2147467263i32 // E_NOTIMPL - reject change password, credui, etc.
@@ -451,11 +468,28 @@ unsafe extern "system" fn provider_get_field_descriptor_at(
 }
 
 unsafe extern "system" fn provider_get_credential_count(
-    _this: *mut c_void,
+    this: *mut c_void,
     count: *mut u32,
     default_index: *mut u32,
     auto_logon: *mut i32,
 ) -> i32 {
+    // RDP-session unlock degradation (verified on TEST-WIN, 6 serialization
+    // variants): winlogon submits third-party CP unlock credentials for a
+    // REMOTE session through a RemoteInteractive path that fails
+    // 0xC000006D/0xC00000E5 before any LSA audit, while built-in providers
+    // are submitted with LogonType=7 and succeed. Our tiles can never work
+    // in this scenario, so contribute zero tiles; the filter allows all
+    // providers in the same scenario, leaving the built-in password tile.
+    // Fresh logon (cpus=1, including RDP) and LOCAL unlock are unaffected
+    // and remain dual-control.
+    let provider = &*(this as *const DualAuthProviderCom);
+    if provider.usage_scenario == CPUS_UNLOCK_WORKSTATION && provider.remote_session {
+        trace("Provider::GetCredentialCount -> 0 (RDP-session unlock degraded to built-in)");
+        *count = 0;
+        *default_index = u32::MAX;
+        *auto_logon = 0;
+        return 0; // S_OK
+    }
     trace("Provider::GetCredentialCount -> 2");
     *count = 2;           // Tile 0: dual-control login; Tile 1: emergency override
     *default_index = u32::MAX; // CREDENTIAL_PROVIDER_NO_DEFAULT
@@ -489,6 +523,11 @@ unsafe extern "system" fn provider_get_credential_at(
             return -2147467259i32; // E_OUTOFMEMORY
         }
     }
+
+    // Keep the credential's view of the usage scenario in sync: GetUserSid
+    // (ICredentialProviderCredential2) must return the locked user's SID only
+    // in CPUS_UNLOCK_WORKSTATION and S_FALSE otherwise.
+    (*(*slot as *mut DualAuthCredentialCom)).usage_scenario = provider.usage_scenario;
 
     // Return the credential pointer. AddRef for the caller.
     *ppcpc = *slot;
@@ -585,7 +624,19 @@ unsafe extern "system" fn filter_filter(
         trace("Filter::Filter -> E_NOTIMPL (not logon/unlock scenario)");
         return -2147467263i32; // E_NOTIMPL
     }
-    
+
+    // RDP-session unlock degradation: our provider contributes zero tiles in
+    // this scenario (see provider_get_credential_count), so built-in
+    // providers MUST be allowed through or the session could never be
+    // unlocked at all.
+    if cpus == CPUS_UNLOCK_WORKSTATION && is_remote_session() {
+        trace("Filter::Filter RDP-session unlock -> allow all (degraded)");
+        for i in 0..cproviders {
+            *rgballow.add(i as usize) = 1; // TRUE
+        }
+        return 0; // S_OK
+    }
+
     // Read registry policy: if default_tile_enabled=true, don't filter anything
     let hide_others = match read_registry_default_tile_enabled() {
         Ok(Some(true)) => {

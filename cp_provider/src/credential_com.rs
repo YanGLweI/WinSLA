@@ -33,6 +33,14 @@ const IID_ICREDENTIAL_PROVIDER_CREDENTIAL_WITH_SUBMISSION_OPTIONS: GUID = GUID {
     data4: [0x94, 0x85, 0x56, 0xA3, 0x57, 0x26, 0xFE, 0x1C],
 };
 
+/// IID_ICredentialProviderCredential2 = {FD672C54-40EA-4D6E-9B49-CFB1A7507BD7}
+const IID_ICREDENTIAL_PROVIDER_CREDENTIAL2: GUID = GUID {
+    data1: 0xFD672C54,
+    data2: 0x40EA,
+    data3: 0x4D6E,
+    data4: [0x9B, 0x49, 0xCF, 0xB1, 0xA7, 0x50, 0x7B, 0xD7],
+};
+
 // Field indices (union of both tiles; visibility is controlled per-tile in GetFieldState)
 const FIELD_USER_A_NAME: u32 = 0;   // Dual: primary account; Emergency: emergency account
 const FIELD_USER_A_PASS: u32 = 1;
@@ -98,7 +106,11 @@ struct CredSerialization {
     rgb_serialization: *mut u8,      // offset 28
 }
 
-/// ICredentialProviderCredential vtable (IUnknown + 17 methods)
+/// ICredentialProviderCredential2 vtable (IUnknown + 17 + GetUserSid).
+/// The main credential object uses this 21-slot vtable directly, so a single
+/// pointer satisfies both ICredentialProviderCredential (first 20 slots) and
+/// ICredentialProviderCredential2 (all 21 slots) - classic C++ inheritance
+/// layout, no stub objects, no this-pointer translation.
 #[repr(C)]
 pub struct CredentialVTable {
     // IUnknown (3)
@@ -123,6 +135,8 @@ pub struct CredentialVTable {
     pub command_link_clicked: unsafe extern "system" fn(*mut c_void, u32) -> i32,
     pub get_serialization: unsafe extern "system" fn(*mut c_void, *mut u32, *mut c_void, *mut *mut u16, *mut u32) -> i32,
     pub report_result: unsafe extern "system" fn(*mut c_void, i32, i32, *mut *mut u16, *mut u32) -> i32,
+    // ICredentialProviderCredential2 (1)
+    pub get_user_sid: unsafe extern "system" fn(*mut c_void, *mut *mut u16) -> i32,
 }
 
 /// The credential COM object holding user input state
@@ -148,6 +162,9 @@ pub struct DualAuthCredentialCom {
     pub field_options_stub: *mut FieldOptionsStub,
     // Nested stub for ICredentialProviderCredentialWithSubmissionOptions
     pub submission_options_stub: *mut SubmissionOptionsStub,
+    // Synced from the provider's SetUsageScenario (CPUS_*); GetUserSid
+    // behaviour differs between logon and unlock scenarios.
+    pub usage_scenario: u32,
 }
 
 /// Nested stub exposing ICredentialProviderCredentialWithFieldOptions.
@@ -203,6 +220,7 @@ static CREDENTIAL_VTABLE: CredentialVTable = CredentialVTable {
     command_link_clicked: cred_command_link_clicked,
     get_serialization: cred_get_serialization,
     report_result: cred_report_result,
+    get_user_sid: cred_get_user_sid,
 };
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -246,6 +264,7 @@ impl DualAuthCredentialCom {
             serialized_pass: Zeroizing::new(Vec::new()),
             field_options_stub: std::ptr::null_mut(),
             submission_options_stub: std::ptr::null_mut(),
+            usage_scenario: 0,
         });
         let ptr = Box::into_raw(cred) as *mut c_void;
         // Create the field options stub
@@ -296,12 +315,29 @@ unsafe extern "system" fn cred_query_interface(
         cred_add_ref(this); // share refcount with owner
         crate::provider_com::trace("Credential::QI -> ICredentialProviderCredentialWithSubmissionOptions");
         0
+    } else if *iid == IID_ICREDENTIAL_PROVIDER_CREDENTIAL2 {
+        // ICredentialProviderCredential2 INHERITS ICredentialProviderCredential.
+        // Our main vtable is the full 21-slot vtable (20 base + GetUserSid),
+        // so `this` satisfies both interfaces with classic C++ layout.
+        // Never answer this IID with a short stub vtable: LogonUI would call
+        // base methods through garbage slots and the tile vanishes (v1.0.21 bug).
+        //
+        // Only expose the interface in CPUS_UNLOCK_WORKSTATION: it exists
+        // solely so winlogon can SID-match our tile to the locked user.
+        // Answering it during fresh logon changes LogonUI's tile treatment
+        // (custom bitmap ignored, default-tile selection altered) for no
+        // benefit, so keep the v1.0.20 behavior (E_NOINTERFACE) there.
+        let cred = &*(this as *const DualAuthCredentialCom);
+        if cred.usage_scenario != 2 {
+            *ppv = std::ptr::null_mut();
+            crate::provider_com::trace("Credential::QI -> Credential2 withheld (logon scenario)");
+            return -2147467262i32; // E_NOINTERFACE
+        }
+        *ppv = this;
+        cred_add_ref(this);
+        crate::provider_com::trace("Credential::QI -> ICredentialProviderCredential2");
+        0
     } else {
-        // NOTE: ICredentialProviderCredential2 ({FD672C54-...}) must NOT be answered
-        // with a 4-slot stub vtable. It INHERITS ICredentialProviderCredential, so
-        // LogonUI expects the full 20-method vtable + GetUserArrayIndex. Returning a
-        // short vtable corrupts LogonUI state and the tile disappears (v1.0.21 bug).
-        // The interface is optional: v1.0.20 answered E_NOINTERFACE and tile showed fine.
         *ppv = std::ptr::null_mut();
         crate::provider_com::trace("Credential::QI -> E_NOINTERFACE");
         -2147467262i32
@@ -492,7 +528,7 @@ unsafe extern "system" fn cred_get_serialization(
             "GetSerialization: auth_success cached, re-serializing user='{}' pass_len={}",
             user_a, pass_a.len()
         ));
-        fill_serialization(serialization, &user_a, &pass_a);
+        fill_serialization(serialization, &user_a, &pass_a, c.usage_scenario);
         log_serialization_bytes("GetSerialization(cached) FINAL struct", serialization);
         set_empty_status(status_text);
         *status_icon = 0;
@@ -551,7 +587,7 @@ unsafe fn serialize_dual(
             crate::provider_com::trace(&format!(
                 "GetSerialization(dual): AUTH SUCCESS canonical='{}'", logon_name
             ));
-            fill_serialization(serialization, &logon_name, &pass_a);
+            fill_serialization(serialization, &logon_name, &pass_a, c.usage_scenario);
             log_serialization_bytes("GetSerialization(dual success) FINAL struct", serialization);
             // IMPORTANT: When returning CREDENTIAL_FINISHED, status_text MUST be NULL
             // and status_icon MUST be CPSI_NONE (0) per Microsoft documentation.
@@ -640,7 +676,7 @@ unsafe fn serialize_emergency(
             crate::provider_com::trace(&format!(
                 "GetSerialization(emergency): OVERRIDE APPROVED canonical='{}'", logon_name
             ));
-            fill_serialization(serialization, &logon_name, &pass);
+            fill_serialization(serialization, &logon_name, &pass, c.usage_scenario);
             log_serialization_bytes("GetSerialization(emergency success) FINAL struct", serialization);
             set_empty_status(status_text);
             *status_icon = 0;
@@ -671,6 +707,140 @@ unsafe fn serialize_emergency(
             0
         }
     }
+}
+
+/// ICredentialProviderCredential2::GetUserSid.
+///
+/// Winlogon calls this during Post Initialization to associate the tile with
+/// a known user. In CPUS_UNLOCK_WORKSTATION the association is MANDATORY:
+/// submissions from tiles that do not SID-match the locked session's user are
+/// rejected with 0xC000006D/0xC00000E5 before any Kerberos traffic - even
+/// with a byte-correct KERB_INTERACTIVE_UNLOCK_LOGON including the right
+/// LogonId (verified 2026-07-30: patched LogonId=0x84381, still rejected).
+///
+/// The unlock UI (LogonUI) runs inside the locked terminal session, so we
+/// recover the interactive user's SID from that session's process tokens
+/// (first process whose token user SID is S-1-5-21-*).
+/// In fresh-logon scenarios there is no such user and we return S_FALSE,
+/// keeping the tile an "Other User" tile exactly as before this interface
+/// was implemented.
+unsafe extern "system" fn cred_get_user_sid(this: *mut c_void, sid: *mut *mut u16) -> i32 {
+    let c = &*(this as *const DualAuthCredentialCom);
+    crate::provider_com::trace(&format!("Credential::GetUserSid scenario={}", c.usage_scenario));
+    *sid = std::ptr::null_mut();
+    // CPUS_UNLOCK_WORKSTATION = 2. Only the DUAL tile claims the locked user:
+    // if the emergency tile also SID-matches, LogonUI treats it as a user tile
+    // and picks it as the DEFAULT on the unlock screen (observed on TEST-WIN).
+    if c.usage_scenario != 2 || !matches!(c.tile_type, TileType::Dual) {
+        return 1; // S_FALSE - "Other User" tile (fresh logon UX unchanged)
+    }
+    if let Some(sid_str) = find_session_user_sid_string() {
+        let wide = to_wide(&sid_str);
+        let p = windows::Win32::System::Com::CoTaskMemAlloc(wide.len() * 2) as *mut u16;
+        if !p.is_null() {
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
+            *sid = p;
+            crate::provider_com::trace(&format!("Credential::GetUserSid -> {}", sid_str));
+            return 0;
+        }
+    }
+    crate::provider_com::trace("Credential::GetUserSid -> S_FALSE (no session user found)");
+    1 // S_FALSE
+}
+
+/// Find the SID string ("S-1-5-21-...") of the interactive user logged on in
+/// OUR terminal session. Used by GetUserSid for the unlock scenario.
+unsafe fn find_session_user_sid_string() -> Option<String> {
+    let mut our_session: u32 = 0;
+    if ProcessIdToSessionId(std::process::id(), &mut our_session) == 0 {
+        return None;
+    }
+    let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if snap == 0 || snap == -1isize as isize {
+        return None;
+    }
+    let mut found: Option<String> = None;
+    let mut pe: ProcessEntry32W = std::mem::zeroed();
+    pe.size = std::mem::size_of::<ProcessEntry32W>() as u32;
+    if Process32FirstW(snap, &mut pe) != 0 {
+        loop {
+            let mut proc_session: u32 = 0;
+            if ProcessIdToSessionId(pe.process_id, &mut proc_session) != 0
+                && proc_session == our_session
+            {
+                if let Some(s) = process_user_sid_string_if_interactive(pe.process_id) {
+                    crate::provider_com::trace(&format!(
+                        "find_session_user_sid_string: pid={} -> {}", pe.process_id, s
+                    ));
+                    found = Some(s);
+                    break;
+                }
+            }
+            if Process32NextW(snap, &mut pe) == 0 {
+                break;
+            }
+        }
+    }
+    CloseHandle(snap);
+    found
+}
+
+/// If process `pid` runs as an interactive account (user SID S-1-5-21-*),
+/// return that SID as a string. Filters out SYSTEM (S-1-5-18), LOCAL/NETWORK
+/// SERVICE (S-1-5-19/20), service SIDs (S-1-5-80-*), DWM (S-1-5-90-*), etc.
+unsafe fn process_user_sid_string_if_interactive(pid: u32) -> Option<String> {
+    let hproc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    if hproc == 0 {
+        return None;
+    }
+    let mut htok: isize = 0;
+    let result = (|| {
+        if OpenProcessToken(hproc, TOKEN_QUERY, &mut htok) == 0 {
+            return None;
+        }
+        let mut need: u32 = 0;
+        GetTokenInformation(htok, 1, std::ptr::null_mut(), 0, &mut need);
+        if need == 0 || need > 4096 {
+            return None;
+        }
+        let mut buf = vec![0u8; need as usize];
+        if GetTokenInformation(htok, 1, buf.as_mut_ptr() as *mut c_void, need, &mut need) == 0 {
+            return None;
+        }
+        let sid = *(buf.as_ptr() as *const *const u8);
+        if sid.is_null() {
+            return None;
+        }
+        // SID layout: Revision(1) SubAuthorityCount(1) IdentifierAuthority(6,
+        // big-endian) SubAuthority[0](4, LE) ... Domain/local user accounts
+        // have S-1-5-21-*: Rev=1, Auth=5, SubAuth[0]=21.
+        if *sid != 1 || *sid.add(1) < 2 {
+            return None;
+        }
+        if std::slice::from_raw_parts(sid.add(2), 6) != [0, 0, 0, 0, 0, 5] {
+            return None;
+        }
+        let sub0 = u32::from_le_bytes([*sid.add(8), *sid.add(9), *sid.add(10), *sid.add(11)]);
+        if sub0 != 21 {
+            return None;
+        }
+        let mut str_ptr: *mut u16 = std::ptr::null_mut();
+        if ConvertSidToStringSidW(sid as *const c_void, &mut str_ptr) == 0 || str_ptr.is_null() {
+            return None;
+        }
+        let mut len = 0usize;
+        while *str_ptr.add(len) != 0 {
+            len += 1;
+        }
+        let s = String::from_utf16_lossy(std::slice::from_raw_parts(str_ptr, len));
+        LocalFree(str_ptr as isize);
+        Some(s)
+    })();
+    if htok != 0 {
+        CloseHandle(htok);
+    }
+    CloseHandle(hproc);
+    result
 }
 
 unsafe extern "system" fn cred_report_result(
@@ -831,6 +1001,150 @@ struct LsaAnsiString {
     buffer: *const u8,
 }
 
+/// PROCESSENTRY32W for Toolhelp process enumeration
+#[repr(C)]
+struct ProcessEntry32W {
+    size: u32,
+    cnt_usage: u32,
+    process_id: u32,
+    default_heap_id: usize,
+    module_id: u32,
+    cnt_threads: u32,
+    parent_process_id: u32,
+    pri_class_base: i32,
+    flags: u32,
+    exe_file: [u16; 260],
+}
+
+const TH32CS_SNAPPROCESS: u32 = 0x2;
+const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+const TOKEN_QUERY: u32 = 0x8;
+
+/// Resolve an account name ("DOMAIN\\user" or UPN) to a binary SID.
+unsafe fn sid_from_account_name(name: &str) -> Option<Vec<u8>> {
+    let name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut sid_len: u32 = 0;
+    let mut dom_len: u32 = 0;
+    let mut sid_use: u32 = 0;
+    LookupAccountNameW(
+        std::ptr::null(), name_w.as_ptr(), std::ptr::null_mut(), &mut sid_len,
+        std::ptr::null_mut(), &mut dom_len, &mut sid_use,
+    );
+    if sid_len == 0 {
+        return None;
+    }
+    let mut sid = vec![0u8; sid_len as usize];
+    let mut dom = vec![0u16; dom_len as usize];
+    let ok = LookupAccountNameW(
+        std::ptr::null(), name_w.as_ptr(), sid.as_mut_ptr() as *mut c_void, &mut sid_len,
+        dom.as_mut_ptr(), &mut dom_len, &mut sid_use,
+    );
+    if ok == 0 {
+        return None;
+    }
+    Some(sid)
+}
+
+/// If process `pid` runs as the user identified by `target_sid`, return its
+/// token's AuthenticationId (the LUID of that user's logon session).
+unsafe fn process_token_logon_id_if_user(pid: u32, target_sid: &[u8]) -> Option<u64> {
+    let hproc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    if hproc == 0 {
+        return None;
+    }
+    let mut htok: isize = 0;
+    let result = (|| {
+        if OpenProcessToken(hproc, TOKEN_QUERY, &mut htok) == 0 {
+            return None;
+        }
+        // TokenUser (class 1)
+        let mut need: u32 = 0;
+        GetTokenInformation(htok, 1, std::ptr::null_mut(), 0, &mut need);
+        if need == 0 || need > 4096 {
+            return None;
+        }
+        let mut buf = vec![0u8; need as usize];
+        if GetTokenInformation(htok, 1, buf.as_mut_ptr() as *mut c_void, need, &mut need) == 0 {
+            return None;
+        }
+        let sid_ptr = *(buf.as_ptr() as *const *mut c_void);
+        if EqualSid(sid_ptr, target_sid.as_ptr() as *mut c_void) == 0 {
+            return None;
+        }
+        // TokenStatistics (class 10): TokenId@0, AuthenticationId@8, 56 bytes total
+        let mut stats = [0u8; 64];
+        let mut stats_len: u32 = 0;
+        if GetTokenInformation(htok, 10, stats.as_mut_ptr() as *mut c_void, 64, &mut stats_len) == 0 {
+            return None;
+        }
+        let auth_id = u64::from_le_bytes(stats[8..16].try_into().ok()?);
+        Some(auth_id)
+    })();
+    if htok != 0 {
+        CloseHandle(htok);
+    }
+    CloseHandle(hproc);
+    result
+}
+
+/// Find the LUID of an existing interactive logon session for `canonical_user`
+/// ("DOMAIN\\user") in OUR terminal session (the one LogonUI is running in).
+/// A match exists exactly in the CPUS_UNLOCK_WORKSTATION case: winlogon then
+/// expects KERB_INTERACTIVE_UNLOCK_LOGON.LogonId to reference that locked
+/// session, but only patches it for tiles it can SID-match via
+/// ICredentialProviderCredential2::GetUserSid (which we deliberately do not
+/// implement). Without it the Kerberos package receives LogonId=0 and the
+/// unlock dies with 0xC000006D / 0xC00000E5 before any KDC traffic.
+///
+/// NOTE: LsaEnumerateLogonSessions cannot be used here - LogonUI's SYSTEM
+/// token is stripped of SeTcbPrivilege (LsaRegisterLogonProcess fails).
+/// Instead we enumerate processes in our session and read the matching user
+/// token's AuthenticationId (no special privilege required).
+/// For fresh logons there is no user process in the session and the LogonId
+/// stays zero. Fail-safe: any lookup error -> None -> old behavior.
+unsafe fn find_locked_session_logon_id(canonical_user: &str) -> Option<u64> {
+    let target_sid = sid_from_account_name(canonical_user)?;
+
+    let mut our_session: u32 = 0;
+    if ProcessIdToSessionId(std::process::id(), &mut our_session) == 0 {
+        return None;
+    }
+
+    let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if snap == 0 || snap == -1isize as isize {
+        return None;
+    }
+
+    let mut found: Option<u64> = None;
+    let mut pe: ProcessEntry32W = std::mem::zeroed();
+    pe.size = std::mem::size_of::<ProcessEntry32W>() as u32;
+    if Process32FirstW(snap, &mut pe) != 0 {
+        loop {
+            let mut proc_session: u32 = 0;
+            if ProcessIdToSessionId(pe.process_id, &mut proc_session) != 0
+                && proc_session == our_session
+            {
+                if let Some(luid) = process_token_logon_id_if_user(pe.process_id, &target_sid) {
+                    crate::provider_com::trace(&format!(
+                        "find_locked_session_logon_id: match pid={} session={} luid=0x{:x}",
+                        pe.process_id, proc_session, luid
+                    ));
+                    found = Some(luid);
+                    break;
+                }
+            }
+            if Process32NextW(snap, &mut pe) == 0 {
+                break;
+            }
+        }
+    }
+    CloseHandle(snap);
+    if found.is_none() {
+        crate::provider_com::trace("find_locked_session_logon_id: no matching user process in session");
+    }
+    found
+}
+
 #[link(name = "secur32")]
 extern "system" {
     fn LsaConnectUntrusted(lsa_handle: *mut isize) -> i32;
@@ -865,6 +1179,17 @@ extern "system" {
 #[link(name = "advapi32")]
 extern "system" {
     fn OpenProcessToken(process: isize, desired_access: u32, token: *mut isize) -> i32;
+    fn GetTokenInformation(
+        token: isize, token_information_class: u32, token_information: *mut c_void,
+        token_information_length: u32, return_length: *mut u32,
+    ) -> i32;
+    fn LookupAccountNameW(
+        system_name: *const u16, account_name: *const u16, sid: *mut c_void,
+        cb_sid: *mut u32, referenced_domain_name: *mut u16, cch_domain_name: *mut u32,
+        pe_use: *mut u32,
+    ) -> i32;
+    fn EqualSid(sid1: *const c_void, sid2: *const c_void) -> i32;
+    fn ConvertSidToStringSidW(sid: *const c_void, string_sid: *mut *mut u16) -> i32;
     fn LookupPrivilegeValueW(
         system_name: *const u16, privilege_name: *const u16, luid: *mut u64,
     ) -> i32;
@@ -883,6 +1208,11 @@ extern "system" {
     fn GetCurrentProcess() -> isize;
     fn CloseHandle(handle: isize) -> i32;
     fn ProcessIdToSessionId(process_id: u32, session_id: *mut u32) -> i32;
+    fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> isize;
+    fn CreateToolhelp32Snapshot(flags: u32, process_id: u32) -> isize;
+    fn Process32FirstW(snapshot: isize, entry: *mut ProcessEntry32W) -> i32;
+    fn Process32NextW(snapshot: isize, entry: *mut ProcessEntry32W) -> i32;
+    fn LocalFree(mem: isize) -> isize;
 }
 
 #[link(name = "user32")]
@@ -955,6 +1285,50 @@ unsafe fn get_negotiate_package_id() -> u32 {
         return kerb_pkg;
     }
     0 // Last resort: assume Negotiate is 0
+}
+
+/// Look up the Kerberos authentication package ID via an untrusted LSA
+/// connection. Returns 0xFFFFFFFF on failure.
+unsafe fn get_kerberos_package_id() -> u32 {
+    let mut handle: isize = 0;
+    if LsaConnectUntrusted(&mut handle) != 0 {
+        return 0xFFFFFFFF;
+    }
+    let ansi = LsaAnsiString {
+        length: 8,
+        maximum_length: 9,
+        buffer: b"Kerberos".as_ptr(),
+    };
+    let mut pkg: u32 = 0xFFFFFFFF;
+    let st = LsaLookupAuthenticationPackage(handle, &ansi, &mut pkg);
+    let _ = LsaDeregisterLogonProcess(handle);
+    if st != 0 {
+        0xFFFFFFFF
+    } else {
+        pkg
+    }
+}
+
+/// Get the machine's NetBIOS name via GetComputerNameExW (ComputerNameNetBIOS=3)
+unsafe fn get_machine_name() -> String {
+    use windows::Win32::System::SystemInformation::{
+GetComputerNameExW, COMPUTER_NAME_FORMAT,
+    };
+    let mut size: u32 = 0;
+let _ = GetComputerNameExW(COMPUTER_NAME_FORMAT(3), windows::core::PWSTR::null(), &mut size);
+    if size == 0 {
+        return String::new();
+    }
+    let mut buf: Vec<u16> = vec![0; size as usize];
+let ok = GetComputerNameExW(
+        COMPUTER_NAME_FORMAT(3),
+        windows::core::PWSTR(buf.as_mut_ptr()),
+        &mut size,
+    );
+    if ok.is_err() || size == 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..size as usize])
 }
 
 /// Get the machine's DNS domain name via GetComputerNameExW
@@ -1047,10 +1421,17 @@ unsafe fn log_serialization_bytes(tag: &str, serialization: *mut c_void) {
     ));
 }
 
+/// CredPackAuthenticationBufferW flag: CredProtect the password field while
+/// keeping the KERB_INTERACTIVE_UNLOCK_LOGON layout (verified by local probe:
+/// identical 64-byte header, only the password becomes a protected blob).
+const CRED_PACK_PROTECTED_CREDENTIALS: u32 = 0x1;
+
 /// Fill CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION using CredPackAuthenticationBufferW.
 /// This is the standard format used by the built-in PasswordProvider.
 /// With response=2 (CPGSR_RETURN_CREDENTIAL_FINISHED), LogonUI will process this buffer.
-unsafe fn fill_serialization(serialization: *mut c_void, username: &str, password: &str) {
+unsafe fn fill_serialization(
+    serialization: *mut c_void, username: &str, password: &str, usage_scenario: u32,
+) {
     // Verify struct layout at compile time (must be 32 bytes, matching SDK)
     const _: () = assert!(std::mem::size_of::<CredSerialization>() == 32);
 
@@ -1076,9 +1457,22 @@ unsafe fn fill_serialization(serialization: *mut c_void, username: &str, passwor
         }
     };
 
+    // Packing flags history (verified on TEST-WIN, HOT domain):
+    // - flags=0 (plaintext): fresh logons OK, but CPUS_UNLOCK_WORKSTATION is
+    //   rejected with 0xC000006D / 0xC00000E5 before any KDC traffic - the
+    //   unlock path requires a protected password (Microsoft sample comment:
+    //   "CredPackAuthenticationBuffer() cannot be used because it won't work
+    //   with unlock scenario" - i.e. not with plaintext packing).
+    // - flags=0x8 (CRED_PACK_ID_PROVIDER_CREDENTIALS): produces a CloudAP/
+    //   NegoExtender blob (NOT KERB layout) -> 0xC0000003 in every scenario.
+    // - flags=0x1 (CRED_PACK_PROTECTED_CREDENTIALS): same KERB layout with
+    //   CredProtect'ed password - the format the built-in PasswordProvider
+    //   uses; works for logon and unlock alike.
+    let pack_flags: u32 = 0; // plaintext: KerbUnlockLogon never CredUnprotects (with GetUserSid+LogonId patch)
+
     crate::provider_com::trace(&format!(
-        "fill_serialization: fq_user='{}' password_len={} (CredPackAuthenticationBufferW)",
-        fq_user, password.len()
+        "fill_serialization: fq_user='{}' password_len={} pack_flags=0x{:X} (CredPackAuthenticationBufferW)",
+        fq_user, password.len(), pack_flags
     ));
 
     let user_wide: Vec<u16> = fq_user.encode_utf16().chain(std::iter::once(0)).collect();
@@ -1088,8 +1482,36 @@ unsafe fn fill_serialization(serialization: *mut c_void, username: &str, passwor
         user_wide.len(), pass_wide.len()
     ));
 
-    // Get the correct Negotiate auth package ID from LSA
-    let auth_pkg = get_negotiate_package_id();
+    // Auth package selection:
+    // - Fresh logon (cpus=1) or local account: Negotiate (proven working for
+    //   every logon variant; its Kerberos/NTLM dispatch is correct there).
+    // - UNLOCK (cpus=2) of a domain account: the Kerberos package DIRECTLY.
+    //   winlogon calls LsaLogonUser with the locked session's ORIGINAL logon
+    //   type - for RDP sessions that is RemoteInteractive(10), and Negotiate
+    //   then dispatches the KERB-formatted buffer to MSV1_0, which cannot
+    //   parse MessageType=2 and fails 0xC000006D/0xC00000E5 before any audit
+    //   event (verified on TEST-WIN: local unlock with LogonType=7 succeeds,
+    //   RDP-session unlock fails; built-in PasswordProvider serializes domain
+    //   credentials to the Kerberos package for the same reason).
+    let auth_pkg = {
+        let domain_part = fq_user.split('\\').next().unwrap_or("");
+        let is_domain_account = fq_user.contains('@')
+            || (!domain_part.is_empty()
+                && !domain_part.eq_ignore_ascii_case(&get_machine_name()));
+        if usage_scenario == 2 && is_domain_account {
+            let kerb = get_kerberos_package_id();
+            if kerb != 0xFFFFFFFF {
+                crate::provider_com::trace(
+                    "fill_serialization: unlock + domain account -> Kerberos package"
+                );
+                kerb
+            } else {
+                get_negotiate_package_id()
+            }
+        } else {
+            get_negotiate_package_id()
+        }
+    };
 
     // Use OUR provider's CLSID (matches registry registration {E4D9F6E7-...}).
     // Using PasswordProvider's CLSID here causes the PasswordProvider's
@@ -1116,7 +1538,7 @@ unsafe fn fill_serialization(serialization: *mut c_void, username: &str, passwor
     // First call: get required buffer size
     let mut cb: u32 = 0;
     let rc1 = CredPackAuthenticationBufferW(
-        0, user_wide.as_ptr(), pass_wide.as_ptr(),
+        pack_flags, user_wide.as_ptr(), pass_wide.as_ptr(),
         std::ptr::null_mut(), &mut cb,
     );
     crate::provider_com::trace(&format!(
@@ -1135,7 +1557,7 @@ unsafe fn fill_serialization(serialization: *mut c_void, username: &str, passwor
         return;
     }
     let ok = CredPackAuthenticationBufferW(
-        0, user_wide.as_ptr(), pass_wide.as_ptr(),
+        pack_flags, user_wide.as_ptr(), pass_wide.as_ptr(),
         buffer, &mut cb,
     );
     if ok == 0 {
@@ -1146,27 +1568,28 @@ unsafe fn fill_serialization(serialization: *mut c_void, username: &str, passwor
 
     crate::provider_com::trace(&format!("fill_serialization: CredPack OK, {} bytes", cb));
 
-    // DIAGNOSTIC: Dump FULL CredPack buffer content for analysis
-    let buffer_bytes = std::slice::from_raw_parts(buffer, cb as usize);
+    // DIAGNOSTIC: dump only the buffer header (struct layout/offsets). Never
+    // dump the full buffer: plaintext packing contains the clear-text password.
+    let dump_len = std::cmp::min(cb as usize, 64);
+    let buffer_bytes = std::slice::from_raw_parts(buffer, dump_len);
     let hex_dump: String = buffer_bytes.iter()
         .map(|b| format!("{:02x}", b))
         .collect();
-    crate::provider_com::trace(&format!("CredPack FULL buffer ({} bytes): {}",
-        buffer_bytes.len(), hex_dump));
+    crate::provider_com::trace(&format!(
+        "CredPack buffer header ({} of {} bytes): {}", dump_len, cb, hex_dump
+    ));
 
-    // Check for valid wide strings in the buffer
-    let mut offset = 0;
-    while offset + 2 <= buffer_bytes.len() {
-        let wchar = u16::from_le_bytes([buffer_bytes[offset], buffer_bytes[offset + 1]]);
-        if wchar == 0 {
-            break;
-        }
-        if wchar < 32 || wchar > 126 {
+    // CPUS_UNLOCK_WORKSTATION fix: patch KERB_INTERACTIVE_UNLOCK_LOGON.LogonId
+    // (offset 56, right after the three UNICODE_STRINGs) with the locked
+    // session's LUID so the Kerberos package can associate the unlock with
+    // the existing logon session. No-op for fresh logons (no session found).
+    if cb >= 64 {
+        if let Some(luid) = find_locked_session_logon_id(&fq_user) {
+            *(buffer.add(56) as *mut u64) = luid;
             crate::provider_com::trace(&format!(
-                "CredPack: Non-ASCII wchar at offset {}: 0x{:04x}", offset, wchar
+                "fill_serialization: patched LogonId=0x{:x} into unlock buffer", luid
             ));
         }
-        offset += 2;
     }
 
     // Fill using the typed struct (ensures correct offsets and padding)

@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/language-Rust-orange" alt="Language" />
-  <img src="https://img.shields.io/badge/version-2.2.1-yellow" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.2.3-yellow" alt="Version" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
 </p>
 
@@ -34,6 +34,20 @@ WinSLA 是一个 Windows 系统级双账号认证登录代理。在 Active Direc
 - **离线缓存**：AD/LDAP网络不可达时可用本地缓存凭据进行应急验证（需预先配置）
 - **审计日志**：所有认证事件记录到本地数据库与日志
 - **集中管理**：管理端 GUI 提供仪表盘、配对规则、应急账号、审计日志、策略配置
+
+### ⚠️ 已知平台限制：RDP 会话解锁降级（v2.2.3 起）
+
+经实测验证（Windows 11 25H2 / Build 26100），Windows 在 **RDP 会话的锁屏解锁** 场景对第三方 Credential Provider 存在未文档化的区别对待：winlogon 对内置凭据提供程序以 `LogonType=7 (Unlock)` 向 LSA 提交，而第三方提供程序的提交走 RemoteInteractive 路径，在 LSA 入口即失败（`0xC000006D / 0xC00000E5`，且不产生任何审计事件）。已穷尽序列化侧全部变量（缓冲格式、认证包 Negotiate/Kerberos 直选、LogonId、SID 匹配）均无法规避——与 CP 代码无关。
+
+因此 WinSLA 采用**优雅降级**策略：
+
+| 场景 | 行为 |
+|------|------|
+| 本地登录 / 本地 Win+L 解锁 | ✅ 双控（不受限） |
+| RDP 全新登录（无既有会话） | ✅ 双控（不受限） |
+| **RDP 会话解锁（断线重连 / 会话内 Win+L）** | ⚠️ 自动隐藏双控 Tile，解锁界面显示 Windows 原生密码登录（单因素） |
+
+> **安全建议**：双控语义覆盖「进入会话」的全部路径；仅「已建立 RDP 会话的解锁」降级为单因素，属于 Windows 平台限制。**需要使用双控登录的敏感区域，建议不要启用远程桌面**——物理控制台的登录与解锁均为完整双控。
 
 ---
 
@@ -133,7 +147,7 @@ cargo build --release
 
 #### 方式一：NSIS 安装程序（推荐）
 
-从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.0.9-Setup.exe`，以管理员身份运行。安装程序自动完成：
+从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.2.3-Setup.exe`，以管理员身份运行。安装程序自动完成：
 
 - 复制 DLL/EXE 到 `C:\Program Files\WinSLA`
 - 注册 Credential Provider CLSID 到 64 位注册表视图
@@ -453,7 +467,7 @@ cargo build --release
 
 # 编译 NSIS 安装程序
 & "C:\Program Files (x86)\NSIS\makensis.exe" installer\winsla-installer.nsi
-# 输出: installer\WinSLA-v2.0.9-Setup.exe
+# 输出: installer\WinSLA-v2.2.3-Setup.exe
 ```
 
 ### 测试
