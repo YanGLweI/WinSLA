@@ -23,6 +23,9 @@ pub enum AuthError {
     #[error("Invalid credentials for user: {0}")]
     InvalidCredentials(String),
     
+    #[error("Password expired for user: {0}")]
+    PasswordExpired(String),  // Username whose password is expired
+    
     #[error("Timeout waiting for response")]
     Timeout,
     

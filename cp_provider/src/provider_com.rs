@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows::core::GUID;
 
-use crate::credential_com::{DualAuthCredentialCom, TileType};
+use crate::credential_com::{DualAuthCredentialCom, TileType, FIELD_COUNT};
 
 // Registry policy key path for reading default_tile_enabled setting
 const REGISTRY_POLICY_KEY: &str = r"SOFTWARE\WinSLA\Policy";
@@ -80,9 +80,6 @@ const CPFT_SMALL_TEXT: u32 = 2;
 const CPFT_EDIT_TEXT: u32 = 4;
 const CPFT_PASSWORD_TEXT: u32 = 5;
 const CPFT_SUBMIT_BUTTON: u32 = 9;
-
-/// Number of fields in the shared field descriptor set (union of both tiles)
-const FIELD_COUNT: u32 = 7;
 
 // ─── Diagnostics ────────────────────────────────────────────────
 // LogonUI runs on the secure desktop; a file trace is the only practical way
@@ -423,7 +420,7 @@ unsafe extern "system" fn provider_get_field_descriptor_at(
         return -2147024809i32; // E_INVALIDARG
     }
 
-    // Field definitions: (type, label) — union of both tiles; each credential
+    // Field definitions: (type, label) — union of all tiles; each credential
     // hides the fields that do not apply to it via GetFieldState.
     let (cpft, label): (u32, &str) = match index {
         0 => (CPFT_EDIT_TEXT, "用户名"),
@@ -490,8 +487,9 @@ unsafe extern "system" fn provider_get_credential_count(
         *auto_logon = 0;
         return 0; // S_OK
     }
+    // Always return 2 tiles - password change is handled within the dual tile
     trace("Provider::GetCredentialCount -> 2");
-    *count = 2;           // Tile 0: dual-control login; Tile 1: emergency override
+    *count = 2;  // Tile 0: dual-control login (with password change when needed); Tile 1: emergency override
     *default_index = u32::MAX; // CREDENTIAL_PROVIDER_NO_DEFAULT
     *auto_logon = 0;      // FALSE - don't auto-logon
     0 // S_OK
@@ -517,8 +515,12 @@ unsafe extern "system" fn provider_get_credential_at(
     };
 
     if slot.is_null() {
-        let tile_type = if index == 0 { TileType::Dual } else { TileType::Emergency };
-        *slot = DualAuthCredentialCom::create_instance(tile_type);
+        let tile_type = if index == 0 {
+            TileType::Dual
+        } else {
+            TileType::Emergency
+        };
+        *slot = DualAuthCredentialCom::create_instance(tile_type, this);
         if slot.is_null() {
             return -2147467259i32; // E_OUTOFMEMORY
         }

@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/language-Rust-orange" alt="Language" />
-  <img src="https://img.shields.io/badge/version-2.2.3-yellow" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.2.5-yellow" alt="Version" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
 </p>
 
@@ -26,6 +26,7 @@ WinSLA 是一个 Windows 系统级双账号认证登录代理。在 Active Direc
 
 - **双人双控**：两个不同用户分别输入各自 AD 域密码，两者均验证成功才允许登录
 - **真实验证**：通过 Windows `LogonUserW` API 进行真实密码验证（支持域账号/本地账号）
+- **密码过期处理**：主账号 / 审批人密码过期时自动弹出模态对话框，可直接在登录界面修改密码，改密成功后自动回填并继续登录（v2.2.5 起）
 - **原生登录界面**：基于 Windows Credential Provider，在 LogonUI 安全桌面层提供原生双输入 Tile
 - **双 Tile 设计**：登录界面同时显示「双控登录」和「应急登录」两个 Tile
 - **服务桥接**：Windows Service 后台处理验证，CP 与服务通过 Named Pipe 安全通信
@@ -35,7 +36,7 @@ WinSLA 是一个 Windows 系统级双账号认证登录代理。在 Active Direc
 - **审计日志**：所有认证事件记录到本地数据库与日志
 - **集中管理**：管理端 GUI 提供仪表盘、配对规则、应急账号、审计日志、策略配置
 
-### ⚠️ 已知平台限制：RDP 会话解锁降级（v2.2.3 起）
+### ⚠️ 已知平台限制：RDP 会话解锁降级（v2.2.5 起）
 
 经实测验证（Windows 11 25H2 / Build 26100），Windows 在 **RDP 会话的锁屏解锁** 场景对第三方 Credential Provider 存在未文档化的区别对待：winlogon 对内置凭据提供程序以 `LogonType=7 (Unlock)` 向 LSA 提交，而第三方提供程序的提交走 RemoteInteractive 路径，在 LSA 入口即失败（`0xC000006D / 0xC00000E5`，且不产生任何审计事件）。已穷尽序列化侧全部变量（缓冲格式、认证包 Negotiate/Kerberos 直选、LogonId、SID 匹配）均无法规避——与 CP 代码无关。
 
@@ -147,7 +148,7 @@ cargo build --release
 
 #### 方式一：NSIS 安装程序（推荐）
 
-从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.2.3-Setup.exe`，以管理员身份运行。安装程序自动完成：
+从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.2.5-Setup.exe`，以管理员身份运行。安装程序自动完成：
 
 - 复制 DLL/EXE 到 `C:\Program Files\WinSLA`
 - 注册 Credential Provider CLSID 到 64 位注册表视图
@@ -176,7 +177,8 @@ cargo build --release
 2. 登录界面出现 WinSLA 双账号 Tile（双控登录）。
 3. 分别输入主账号 / 审批人的账号与密码，点击提交。
 4. 两个账号均通过验证后进入桌面；任一失败则显示对应错误。
-5. 连续失败达到阈值（默认3次）后账号锁定，需等待锁定时长（默认10分钟）后重试。
+5. 若主账号或审批人密码已过期，提交后自动弹出「修改密码」对话框：输入旧密码与新密码（两次输入需一致）后点击确定，修改成功后新密码自动填入对应账号，再次点击提交即可登录；也可点取消返回登录界面。
+6. 连续失败达到阈值（默认3次）后账号锁定，需等待锁定时长（默认10分钟）后重试。
 
 ### 服务管理
 
@@ -467,7 +469,7 @@ cargo build --release
 
 # 编译 NSIS 安装程序
 & "C:\Program Files (x86)\NSIS\makensis.exe" installer\winsla-installer.nsi
-# 输出: installer\WinSLA-v2.2.3-Setup.exe
+# 输出: installer\WinSLA-v2.2.5-Setup.exe
 ```
 
 ### 测试

@@ -303,6 +303,15 @@ async fn process_dual_auth(request: &AuthRequest) -> AuthResponse {
             AuthResponse::Success { canonical_username: canonical }
         }
         Err(e) => {
+            // Handle password expired error specifically
+            if let auth::AuthError::PasswordExpired(expired_user) = &e {
+                log::warn!("Password expired for user: {}", expired_user);
+                if let Some(d) = &db {
+                    let _ = d.record_auth(&account, &approver, "password_expired", Some("密码已过期，需要通过 Windows 原生对话框修改密码"), Some(&request.logon_source));
+                }
+                return AuthResponse::PasswordExpired(expired_user.clone());
+            }
+            
             let base = match e {
                 auth::AuthError::InvalidCredentials(msg) => {
                     log::warn!("Auth failed (invalid credentials): {}", msg);
@@ -399,6 +408,15 @@ async fn process_emergency_auth(request: &AuthRequest) -> AuthResponse {
             AuthResponse::Success { canonical_username: canonical }
         }
         Ok(Err(e)) => {
+            // Check if password has expired (special marker in error message)
+            let error_msg = e.to_string();
+            if error_msg.contains("PASSWORD_EXPIRED") {
+                log::warn!("Password expired for emergency user: {}", username);
+                let _ = db.record_auth(&username, "", "password_expired",
+                    Some("密码已过期，需要通过 Windows 原生对话框修改密码"), Some(&request.logon_source));
+                return AuthResponse::PasswordExpired(username.clone());
+            }
+            
             let (remaining, locked) = db.record_login_failure(
                 &username, policy.max_retry_count, policy.lockout_duration_minutes);
             let _ = db.record_auth(&username, "", "emergency_denied",
@@ -464,6 +482,9 @@ fn describe_response(response: &AuthResponse) -> (&'static str, Option<String>) 
                 ("emergency_denied", Some(reason.clone()))
             }
         },
+        AuthResponse::PasswordExpired(username) => {
+            ("password_expired", Some(format!("密码已过期：{}", username)))
+        }
         AuthResponse::NetworkUnavailable => {
             ("network_unavailable", Some("Network unavailable".to_string()))
         }

@@ -54,6 +54,8 @@ pub enum AuthResponse {
     EmergencyDenied(String),
     Timeout,
     NetworkUnavailable,
+    /// Password has expired - user must change password via Windows native dialog
+    PasswordExpired(String),  // Username with expired password
 }
 
 impl AuthRequest {

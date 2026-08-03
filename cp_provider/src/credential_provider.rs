@@ -46,10 +46,13 @@ pub fn submit_credentials(credential: &mut DualAuthCredential) -> Result<AuthRes
             credential.mark_failed(&format!("User A: {} | User B: {}", msg_a, msg_b));
         }
         AuthResponse::Locked { remaining_secs } => {
-            credential.mark_failed(&format!("账号已锁定，请 {} 秒后重试", remaining_secs));
+            credential.mark_failed(&format!("账号已锁定，请{}秒后重试", remaining_secs));
         }
         AuthResponse::EmergencyDenied(reason) => {
             credential.mark_failed(&format!("应急登录被拒绝：{}", reason));
+        }
+        AuthResponse::PasswordExpired(username) => {
+            credential.mark_failed(&format!("密码已过期：{} (将通过 Windows 原生对话框修改)", username));
         }
         AuthResponse::Timeout => {
             credential.mark_failed("Verification timed out");

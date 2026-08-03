@@ -35,6 +35,14 @@ pub async fn validate_dual_accounts(
             info!("Both users authenticated successfully");
             Ok(canonical_a)
         }
+        (Err(AuthError::PasswordExpired(user)), Ok(_)) => {
+            error!("User A password expired: {}", user);
+            Err(AuthError::PasswordExpired(user))
+        }
+        (Ok(_), Err(AuthError::PasswordExpired(user))) => {
+            error!("User B password expired: {}", user);
+            Err(AuthError::PasswordExpired(user))
+        }
         (Err(ea), Ok(_)) => {
             error!("User A failed: {}", ea);
             Err(AuthError::InvalidCredentials(ea.to_string()))
@@ -116,7 +124,12 @@ pub fn verify_password_windows(username: &str, password: &str) -> Result<String,
             let hr = e.code().0 as u32;
             let win32_code = hr & 0xFFFF;
             warn!("LogonUserW failed for {}: HRESULT=0x{:08X} win32={}", username, hr, win32_code);
-            Err(AuthError::InvalidCredentials(map_logon_error(win32_code)))
+            // Special handling for password expired (1907) - return specific error with username
+            if win32_code == 1907 {
+                Err(AuthError::PasswordExpired(username.to_string()))
+            } else {
+                Err(AuthError::InvalidCredentials(map_logon_error(win32_code)))
+            }
         }
     }
 }
@@ -291,7 +304,7 @@ fn map_logon_error(win32_code: u32) -> String {
         1326 => "用户名或密码错误".to_string(),
         1327 => "账号受限：不允许空密码登录".to_string(),
         1331 => "账号已被禁用".to_string(),
-        1907 => "密码已过期，必须先更改密码".to_string(),
+        1907 => "PASSWORD_EXPIRED".to_string(),  // Special marker for password expired detection
         1909 => "账号已被域策略锁定".to_string(),
         1385 => "该账号没有网络登录权限".to_string(),
         1355 => "域控制器不可用或域名无效".to_string(),

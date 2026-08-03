@@ -41,15 +41,16 @@ const IID_ICREDENTIAL_PROVIDER_CREDENTIAL2: GUID = GUID {
     data4: [0x9B, 0x49, 0xCF, 0xB1, 0xA7, 0x50, 0x7B, 0xD7],
 };
 
-// Field indices (union of both tiles; visibility is controlled per-tile in GetFieldState)
+// Field indices (union of all tiles; visibility is controlled per-tile in GetFieldState)
 const FIELD_USER_A_NAME: u32 = 0;   // Dual: primary account; Emergency: emergency account
 const FIELD_USER_A_PASS: u32 = 1;
 const FIELD_USER_B_NAME: u32 = 2;   // Dual only: approver
 const FIELD_USER_B_PASS: u32 = 3;   // Dual only: approver password
 const FIELD_REASON: u32 = 4;        // Emergency only: override reason
-const FIELD_SUBMIT: u32 = 5;
-const FIELD_STATUS: u32 = 6;
-const FIELD_COUNT: u32 = 7;
+const FIELD_SUBMIT: u32 = 5;        // Login submit button
+const FIELD_STATUS: u32 = 6;        // Status text
+/// Total field count for the shared descriptor set (used by provider_com too)
+pub(crate) const FIELD_COUNT: u32 = 7;
 
 /// Which login tile a credential instance represents
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +148,7 @@ pub struct DualAuthCredentialCom {
     pub events: *mut c_void,
     pub advise_context: usize,
     pub tile_type: TileType,
+    pub provider: *mut c_void,  // Pointer to the parent provider (for accessing shared state)
     // Field values (stored as heap-allocated wide strings; passwords zeroized on drop)
     pub user_a_name: Vec<u16>,
     pub user_a_pass: Zeroizing<Vec<u16>>,
@@ -242,7 +244,7 @@ static SUBMISSION_OPTIONS_VTABLE: SubmissionOptionsVTable = SubmissionOptionsVTa
 };
 
 impl DualAuthCredentialCom {
-    pub fn create_instance(tile_type: TileType) -> *mut c_void {
+    pub fn create_instance(tile_type: TileType, provider: *mut c_void) -> *mut c_void {
         let initial_status = match tile_type {
             TileType::Dual => "双控登录",
             TileType::Emergency => "应急登录（需授权账号）",
@@ -253,6 +255,7 @@ impl DualAuthCredentialCom {
             events: std::ptr::null_mut(),
             advise_context: 0,
             tile_type,
+            provider,
             user_a_name: to_wide(""),
             user_a_pass: Zeroizing::new(to_wide("")),
             user_b_name: to_wide(""),
@@ -385,16 +388,17 @@ unsafe extern "system" fn cred_set_deselected(_this: *mut c_void) -> i32 {
 unsafe extern "system" fn cred_get_field_state(
     this: *mut c_void, field: u32, state: *mut u32, interactive: *mut u32,
 ) -> i32 {
-    crate::provider_com::trace(&format!("Credential::GetFieldState field={}", field));
     if field >= FIELD_COUNT {
         return -2147024809i32; // E_INVALIDARG
     }
     let c = &*(this as *const DualAuthCredentialCom);
+    crate::provider_com::trace(&format!("Credential::GetFieldState field={} tile_type={:?}", field, c.tile_type));
+
     // Per-tile field visibility:
-    //   Dual tile      -> hides the emergency reason field
-    //   Emergency tile -> hides the approver fields; hides reason if policy doesn't require it
+    //   Dual tile          -> hides the emergency reason field
+    //   Emergency tile     -> hides the approver fields; hides reason if policy doesn't require it
     let visible = match c.tile_type {
-        TileType::Dual => field != FIELD_REASON,
+        TileType::Dual => field != FIELD_REASON && field <= FIELD_STATUS,
         TileType::Emergency => {
             if field == FIELD_USER_B_NAME || field == FIELD_USER_B_PASS {
                 false
@@ -407,6 +411,7 @@ unsafe extern "system" fn cred_get_field_state(
         }
     };
     *state = if visible { CPFS_DISPLAY_IN_BOTH } else { CPFS_HIDDEN };
+    crate::provider_com::trace(&format!("GetFieldState field={} tile_type={:?} visible={} state={}", field, c.tile_type, visible, *state));
     *interactive = if field == FIELD_USER_A_NAME { CPFIS_FOCUSED } else { CPFIS_NONE };
     0
 }
@@ -618,6 +623,35 @@ unsafe fn serialize_dual(
             *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
+        Ok(AuthResponse::PasswordExpired(expired_username)) => {
+            crate::provider_com::trace(&format!("GetSerialization(dual): PASSWORD EXPIRED for user '{}'", expired_username));
+            // Pop up the modal password change dialog (blocks until the user
+            // finishes or cancels). LogonUI cannot refresh tiles during
+            // serialization (CredentialsChanged -> E_ELEMENT_NOT_FOUND), so a
+            // custom dialog on the secure desktop is the reliable approach.
+            let result = show_password_change_dialog(&expired_username);
+            match &result {
+                PcDialogResult::Changed(new_pass) => {
+                    // Auto-fill the new password into the matching account
+                    // field so the user only needs to click submit again.
+                    let user_a = wide_to_string(&c.user_a_name);
+                    let user_b = wide_to_string(&c.user_b_name);
+                    if username_matches(&user_a, &expired_username) {
+                        c.user_a_pass = Zeroizing::new(to_wide(new_pass));
+                    } else if !user_b.is_empty() {
+                        c.user_b_pass = Zeroizing::new(to_wide(new_pass));
+                    }
+                    set_status(c, status_text, status_icon,
+                        "密码修改成功，请再次点击登录按钮", CPSI_SUCCESS);
+                }
+                PcDialogResult::Cancelled => {
+                    set_status(c, status_text, status_icon,
+                        &format!("账号 '{}' 密码已过期，请修改密码后重新登录", expired_username), CPSI_ERROR);
+                }
+            }
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+            0
+        }
         Ok(_) => {
             set_status(c, status_text, status_icon, "身份验证失败", CPSI_ERROR);
             *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
@@ -692,6 +726,23 @@ unsafe fn serialize_emergency(
         }
         Ok(AuthResponse::EmergencyDenied(msg)) => {
             set_status(c, status_text, status_icon, &format!("应急登录被拒绝：{}", msg), CPSI_ERROR);
+            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+            0
+        }
+        Ok(AuthResponse::PasswordExpired(expired_username)) => {
+            crate::provider_com::trace(&format!("GetSerialization(emergency): PASSWORD EXPIRED for user '{}'", expired_username));
+            let result = show_password_change_dialog(&expired_username);
+            match &result {
+                PcDialogResult::Changed(new_pass) => {
+                    c.user_a_pass = Zeroizing::new(to_wide(new_pass));
+                    set_status(c, status_text, status_icon,
+                        "密码修改成功，请再次点击登录按钮", CPSI_SUCCESS);
+                }
+                PcDialogResult::Cancelled => {
+                    set_status(c, status_text, status_icon,
+                        &format!("账号 '{}' 密码已过期，请修改密码后重新登录", expired_username), CPSI_ERROR);
+                }
+            }
             *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
             0
         }
@@ -1671,4 +1722,399 @@ unsafe fn diag_lsa_logon(username: &str, password: &str) {
         let err3 = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
         crate::provider_com::trace(&format!("DIAG: LogonUserW(WINNT50) FAILED err={}", err3));
     }
+}
+
+// ── Custom Modal Password Change Dialog ──────────────────────────
+//
+// LogonUI cannot refresh tiles during serialization (CredentialsChanged
+// returns E_ELEMENT_NOT_FOUND), so the password-expired flow pops a custom
+// modal dialog on the secure desktop instead. The dialog runs a nested
+// message loop (same pattern as MessageBox) and calls NetUserChangePassword.
+
+// Control IDs. IDOK(1)/IDCANCEL(2) are the standard dialog IDs so that
+// IsDialogMessageW maps Enter -> OK and ESC -> Cancel automatically.
+const PC_EDIT_OLD: isize = 101;
+const PC_EDIT_NEW: isize = 102;
+const PC_EDIT_CONFIRM: isize = 103;
+const PC_ERR_TEXT: isize = 104;
+const PC_BTN_OK: isize = 1;      // IDOK
+const PC_BTN_CANCEL: isize = 2;  // IDCANCEL
+
+const PC_DLG_CLASS: &str = "WinSLAPcDlg";
+
+/// Result of the modal password change dialog.
+enum PcDialogResult {
+    Changed(String), // new password
+    Cancelled,
+}
+
+struct PcDialogData {
+    username: String, // account whose password is expired (domain\user)
+    result: Option<PcDialogResult>,
+}
+
+// Window styles / messages / constants used by the dialog
+const WS_CHILD: u32 = 0x40000000;
+const WS_VISIBLE: u32 = 0x10000000;
+const WS_TABSTOP: u32 = 0x00010000;
+const WS_POPUP: u32 = 0x80000000;
+const WS_CAPTION: u32 = 0x00C00000;
+const WS_SYSMENU: u32 = 0x00080000;
+const DS_MODALFRAME: u32 = 0x80;
+const ES_PASSWORD: u32 = 0x0020;
+const BS_DEFPUSHBUTTON: u32 = 0x0001;
+const BS_PUSHBUTTON: u32 = 0x0000;
+const WM_DESTROY: u32 = 0x0002;
+const WM_CLOSE: u32 = 0x0010;
+const WM_COMMAND: u32 = 0x0111;
+const WM_SETFONT: u32 = 0x0030;
+const SW_SHOW: i32 = 5;
+const DEFAULT_GUI_FONT: i32 = 17;
+const COLOR_BTNFACE: i32 = 15;
+const GWLP_USERDATA: i32 = -21;
+
+#[repr(C)]
+struct WndClassExW {
+    cb_size: u32,
+    style: u32,
+    lpfn_wnd_proc: unsafe extern "system" fn(isize, u32, usize, isize) -> isize,
+    cb_cls_extra: i32,
+    cb_wnd_extra: i32,
+    h_instance: isize,
+    h_icon: isize,
+    h_cursor: isize,
+    hbr_background: isize,
+    lpsz_menu_name: *const u16,
+    lpsz_class_name: *const u16,
+    h_icon_sm: isize,
+}
+
+#[repr(C)]
+struct Msg {
+    hwnd: isize,
+    message: u32,
+    w_param: usize,
+    l_param: isize,
+    time: u32,
+    pt_x: i32,
+    pt_y: i32,
+    l_private: u32,
+}
+
+#[repr(C)]
+struct Rect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn RegisterClassExW(class: *const WndClassExW) -> u16;
+    fn CreateWindowExW(
+        dw_ex_style: u32, class_name: *const u16, window_name: *const u16,
+        dw_style: u32, x: i32, y: i32, width: i32, height: i32,
+        parent: isize, menu: isize, instance: isize, param: *mut c_void,
+    ) -> isize;
+    fn DefWindowProcW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
+    fn GetMessageW(msg: *mut Msg, hwnd: isize, min: u32, max: u32) -> i32;
+    fn TranslateMessage(msg: *const Msg) -> i32;
+    fn DispatchMessageW(msg: *const Msg) -> isize;
+    fn PostQuitMessage(exit_code: i32);
+    fn DestroyWindow(hwnd: isize) -> i32;
+    fn SetFocus(hwnd: isize) -> isize;
+    fn SetForegroundWindow(hwnd: isize) -> i32;
+    fn ShowWindow(hwnd: isize, cmd_show: i32) -> i32;
+    fn IsDialogMessageW(hwnd: isize, msg: *const Msg) -> i32;
+    fn GetDlgItem(hwnd: isize, id: isize) -> isize;
+    fn GetWindowTextLengthW(hwnd: isize) -> i32;
+    fn GetWindowTextW(hwnd: isize, buf: *mut u16, max: i32) -> i32;
+    fn SetWindowTextW(hwnd: isize, text: *const u16) -> i32;
+    fn SendMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
+    fn GetSysColorBrush(index: i32) -> isize;
+    fn SetWindowLongPtrW(hwnd: isize, index: i32, value: isize) -> isize;
+    fn GetWindowLongPtrW(hwnd: isize, index: i32) -> isize;
+    fn GetDpiForSystem() -> u32;
+    fn AdjustWindowRectEx(rect: *mut Rect, style: u32, has_menu: i32, ex_style: u32) -> i32;
+}
+
+#[link(name = "gdi32")]
+extern "system" {
+    fn GetStockObject(kind: i32) -> isize;
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetModuleHandleW(name: *const u16) -> isize;
+}
+
+/// Compare an account name entered in the tile with the expired account name,
+/// ignoring case and the DOMAIN\\ prefix (e.g. "HOT\\zbj" matches "zbj").
+fn username_matches(entered: &str, expired: &str) -> bool {
+    let norm = |s: &str| -> String {
+        let s = s.trim();
+        let s = if let Some(pos) = s.find('\\') { &s[pos + 1..] } else { s };
+        s.to_lowercase()
+    };
+    !entered.trim().is_empty() && norm(entered) == norm(expired)
+}
+
+/// Change the password with NetUserChangePassword. On success returns the new
+/// password; on failure returns a Chinese error message.
+unsafe fn perform_password_change(username: &str, old_pass: &str, new_pass: &str) -> Result<String, String> {
+    use windows::Win32::NetworkManagement::NetManagement::NetUserChangePassword;
+    use windows::core::PCWSTR;
+
+    // Parse domain\user
+    let (domain, user) = if let Some(pos) = username.find('\\') {
+        (username[..pos].to_string(), username[pos + 1..].to_string())
+    } else if let Some(pos) = username.find('@') {
+        (username[pos + 1..].to_string(), username[..pos].to_string())
+    } else {
+        (String::new(), username.to_string())
+    };
+    if user.is_empty() {
+        return Err("用户名不能为空".to_string());
+    }
+
+    let domain_w: Vec<u16> = domain.encode_utf16().chain(std::iter::once(0)).collect();
+    let user_w: Vec<u16> = user.encode_utf16().chain(std::iter::once(0)).collect();
+    let old_w: Vec<u16> = old_pass.encode_utf16().chain(std::iter::once(0)).collect();
+    let new_w: Vec<u16> = new_pass.encode_utf16().chain(std::iter::once(0)).collect();
+
+    crate::provider_com::trace(&format!("perform_password_change: user='{}' domain='{}'", user, domain));
+
+    let domain_pcwstr = if domain.is_empty() { PCWSTR::null() } else { PCWSTR(domain_w.as_ptr()) };
+    let result = NetUserChangePassword(
+        domain_pcwstr,
+        PCWSTR(user_w.as_ptr()),
+        PCWSTR(old_w.as_ptr()),
+        PCWSTR(new_w.as_ptr()),
+    );
+
+    if result == 0 {
+        crate::provider_com::trace("perform_password_change: success");
+        Ok(new_pass.to_string())
+    } else {
+        let err_msg = match result {
+            86 => "指定的密码无效（可能不符合域密码策略）",
+            1326 => "旧密码不正确",
+            1907 => "新密码不符合密码策略要求（长度/复杂度/历史）",
+            2245 => "新密码不符合域密码策略（长度/复杂度/历史记录要求）",
+            _ => return Err(format!("密码修改失败 (错误码：{})", result)),
+        };
+        crate::provider_com::trace(&format!("perform_password_change: failed: {} (error={})", err_msg, result));
+        Err(err_msg.to_string())
+    }
+}
+
+/// Read the text of an EDIT control, zeroized on drop.
+fn read_edit_text(hwnd_edit: isize) -> Zeroizing<Vec<u16>> {
+    let len = unsafe { GetWindowTextLengthW(hwnd_edit) };
+    let mut buf = vec![0u16; (len + 1) as usize];
+    unsafe {
+        GetWindowTextW(hwnd_edit, buf.as_mut_ptr(), len + 1);
+    }
+    Zeroizing::new(buf)
+}
+
+unsafe fn pc_create_child(
+    parent: isize, class: &str, text: &str, style: u32,
+    x: i32, y: i32, w: i32, h: i32, id: isize,
+) -> isize {
+    CreateWindowExW(
+        0,
+        to_wide(class).as_ptr(),
+        to_wide(text).as_ptr(),
+        style,
+        x, y, w, h,
+        parent,
+        id,
+        GetModuleHandleW(std::ptr::null()),
+        std::ptr::null_mut(),
+    )
+}
+
+unsafe extern "system" fn pc_dialog_proc(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize {
+    if msg == WM_COMMAND {
+        let id = (wparam & 0xffff) as isize;
+        let notify = ((wparam >> 16) & 0xffff) as u32;
+        if id == PC_BTN_OK && notify == 0 /* BN_CLICKED */ {
+            let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut PcDialogData);
+            let username = data.username.clone();
+            let old = read_edit_text(GetDlgItem(hwnd, PC_EDIT_OLD));
+            let new = read_edit_text(GetDlgItem(hwnd, PC_EDIT_NEW));
+            let confirm = read_edit_text(GetDlgItem(hwnd, PC_EDIT_CONFIRM));
+            let old_s = wide_to_string(&old);
+            let new_s = wide_to_string(&new);
+            let confirm_s = wide_to_string(&confirm);
+            let validation_err = if old_s.is_empty() || new_s.is_empty() || confirm_s.is_empty() {
+                Some("请填写所有密码字段".to_string())
+            } else if new_s != confirm_s {
+                Some("两次输入的新密码不一致".to_string())
+            } else {
+                None
+            };
+            if let Some(e) = validation_err {
+                SetWindowTextW(GetDlgItem(hwnd, PC_ERR_TEXT), to_wide(&e).as_ptr());
+            } else {
+                match perform_password_change(&username, &old_s, &new_s) {
+                    Ok(new_pass) => {
+                        crate::provider_com::trace(&format!("pc_dialog: password changed for '{}'", username));
+                        data.result = Some(PcDialogResult::Changed(new_pass));
+                        DestroyWindow(hwnd);
+                    }
+                    Err(e) => {
+                        crate::provider_com::trace(&format!("pc_dialog: change failed: {}", e));
+                        SetWindowTextW(GetDlgItem(hwnd, PC_ERR_TEXT), to_wide(&e).as_ptr());
+                    }
+                }
+            }
+            return 0;
+        }
+        if id == PC_BTN_CANCEL && notify == 0 /* BN_CLICKED */ {
+            let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut PcDialogData);
+            data.result = Some(PcDialogResult::Cancelled);
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        return 0;
+    }
+    if msg == WM_CLOSE {
+        let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut PcDialogData);
+        data.result = Some(PcDialogResult::Cancelled);
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    if msg == WM_DESTROY {
+        PostQuitMessage(0);
+        return 0;
+    }
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+/// Create the dialog's child controls and focus the old-password edit box.
+/// `scale` = DPI / 96, applied to every coordinate so the dialog stays fully
+/// visible on high-DPI (incl. RDP) logon screens.
+unsafe fn pc_create_controls(hwnd: isize, scale: f32) {
+    let data = &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut PcDialogData);
+    let hfont = GetStockObject(DEFAULT_GUI_FONT);
+    // Scale a base (96-DPI) coordinate by the system DPI factor.
+    let s = |v: i32| (v as f32 * scale).round() as i32;
+
+    let title = format!("账号 {} 密码已过期，请设置新密码", data.username);
+    let ctl = pc_create_child(hwnd, "STATIC", &title, WS_CHILD | WS_VISIBLE, s(25), s(14), s(350), s(22), 0);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+
+    let ctl = pc_create_child(hwnd, "STATIC", "旧密码", WS_CHILD | WS_VISIBLE, s(30), s(50), s(90), s(20), 0);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+    let ctl = pc_create_child(hwnd, "EDIT", "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_PASSWORD, s(130), s(48), s(240), s(26), PC_EDIT_OLD);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+
+    let ctl = pc_create_child(hwnd, "STATIC", "新密码", WS_CHILD | WS_VISIBLE, s(30), s(82), s(90), s(20), 0);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+    let ctl = pc_create_child(hwnd, "EDIT", "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_PASSWORD, s(130), s(80), s(240), s(26), PC_EDIT_NEW);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+
+    let ctl = pc_create_child(hwnd, "STATIC", "确认新密码", WS_CHILD | WS_VISIBLE, s(30), s(114), s(90), s(20), 0);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+    let ctl = pc_create_child(hwnd, "EDIT", "", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_PASSWORD, s(130), s(112), s(240), s(26), PC_EDIT_CONFIRM);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+
+    // Error text may wrap to two lines for the longest policy message (2245).
+    let ctl = pc_create_child(hwnd, "STATIC", "", WS_CHILD | WS_VISIBLE, s(30), s(152), s(340), s(50), PC_ERR_TEXT);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+
+    let ctl = pc_create_child(hwnd, "BUTTON", "确定", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, s(108), s(246), s(88), s(32), PC_BTN_OK);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+    let ctl = pc_create_child(hwnd, "BUTTON", "取消", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, s(206), s(246), s(88), s(32), PC_BTN_CANCEL);
+    SendMessageW(ctl, WM_SETFONT, hfont as usize, 0);
+
+    SetFocus(GetDlgItem(hwnd, PC_EDIT_OLD));
+}
+
+/// Pop up the modal password change dialog for `expired_username` and block
+/// until the user clicks OK / Cancel / closes the window. Runs a nested
+/// message loop on the calling (LogonUI) thread, like MessageBox.
+unsafe fn show_password_change_dialog(expired_username: &str) -> PcDialogResult {
+    crate::provider_com::trace(&format!("show_password_change_dialog: user='{}'", expired_username));
+
+    // Register the dialog window class once per process (Unlock may re-enter).
+    static REG_ONCE: std::sync::Once = std::sync::Once::new();
+    REG_ONCE.call_once(|| {
+        let class_name = to_wide(PC_DLG_CLASS);
+        let class = WndClassExW {
+            cb_size: std::mem::size_of::<WndClassExW>() as u32,
+            style: 0,
+            lpfn_wnd_proc: pc_dialog_proc,
+            cb_cls_extra: 0,
+            cb_wnd_extra: 0,
+            h_instance: unsafe { GetModuleHandleW(std::ptr::null()) },
+            h_icon: 0,
+            h_cursor: 0,
+            hbr_background: unsafe { GetSysColorBrush(COLOR_BTNFACE) },
+            lpsz_menu_name: std::ptr::null(),
+            lpsz_class_name: class_name.as_ptr(),
+            h_icon_sm: 0,
+        };
+        unsafe {
+            RegisterClassExW(&class);
+        }
+    });
+
+    let mut data = Box::new(PcDialogData {
+        username: expired_username.to_string(),
+        result: None,
+    });
+
+    // DPI-aware sizing: CreateWindowExW's width/height span the WHOLE window
+    // (caption + frame included), so a fixed 250px window leaves only ~219px of
+    // client area at 96 DPI and even less at higher DPI - the button row was
+    // clipped. Compute the outer frame from the desired client size via
+    // AdjustWindowRectEx and scale every coordinate by DPI/96.
+    let scale = GetDpiForSystem() as f32 / 96.0;
+    let s = |v: i32| (v as f32 * scale).round() as i32;
+    let win_style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME;
+    let mut rect = Rect { left: 0, top: 0, right: s(400), bottom: s(300) };
+    AdjustWindowRectEx(&mut rect, win_style, 0, 0);
+    let win_w = rect.right - rect.left;
+    let win_h = rect.bottom - rect.top;
+
+    let screen_w = GetSystemMetrics(0); // SM_CXSCREEN
+    let screen_h = GetSystemMetrics(1); // SM_CYSCREEN
+    let x = (screen_w - win_w) / 2;
+    let y = (screen_h - win_h) / 2;
+
+    let hwnd = CreateWindowExW(
+        0,
+        to_wide(PC_DLG_CLASS).as_ptr(),
+        to_wide("修改密码").as_ptr(),
+        win_style,
+        x, y, win_w, win_h,
+        0, 0,
+        GetModuleHandleW(std::ptr::null()),
+        std::ptr::null_mut(),
+    );
+    if hwnd == 0 {
+        crate::provider_com::trace("show_password_change_dialog: CreateWindowExW failed");
+        return PcDialogResult::Cancelled;
+    }
+
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, &mut *data as *mut PcDialogData as isize);
+    pc_create_controls(hwnd, scale);
+    ShowWindow(hwnd, SW_SHOW);
+    SetForegroundWindow(hwnd);
+    SetFocus(GetDlgItem(hwnd, PC_EDIT_OLD));
+
+    // Nested message loop; IsDialogMessageW provides Tab/Enter/ESC handling.
+    let mut msg: Msg = std::mem::zeroed();
+    while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+        if IsDialogMessageW(hwnd, &msg) == 0 {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    data.result.take().unwrap_or(PcDialogResult::Cancelled)
 }
