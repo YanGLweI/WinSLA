@@ -23,6 +23,18 @@ pub struct DualPairRecord {
     pub updated_at: String,
 }
 
+/// Dual-account pair record (v2: one-to-many approvers)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DualPairV2Record {
+    pub id: String,
+    pub account_sid: String,              // 主账号 SID (作为记录 ID)
+    pub account_username: String,         // 主账号用户名
+    pub approvers: String,                // JSON 数组字符串：[{"sid": "...", "username": "...", "enabled": true}, ...]
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// Emergency override account
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmergencyAccount {
@@ -151,6 +163,10 @@ impl Database {
         // Migration: rename old columns if they exist (v2.0.4 -> v2.0.6)
         self.migrate_old_columns()?;
 
+        // Initialize v2 schema and migrate data
+        self.initialize_schema_v2()?;
+        self.migrate_to_pairs_v2()?;
+
         Ok(())
     }
 
@@ -197,9 +213,83 @@ impl Database {
         Ok(())
     }
 
+    /// Initialize v2 schema (one-to-many pairing)
+    fn initialize_schema_v2(&self) -> SqliteResult<()> {
+        self.conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS dual_pairs_v2 (
+                id TEXT PRIMARY KEY,
+                account_sid TEXT NOT NULL UNIQUE,
+                account_username TEXT NOT NULL,
+                approvers TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_dual_pairs_v2_account_sid ON dual_pairs_v2(account_sid);
+            "
+        )?;
+        
+        Ok(())
+    }
+
+    /// Migrate from old one-to-one to new one-to-many structure
+    fn migrate_to_pairs_v2(&self) -> SqliteResult<()> {
+        // Check if v2 table exists
+        let exists = {
+            let mut stmt = self.conn.prepare("PRAGMA table_info(dual_pairs_v2)")?;
+            let count = stmt.query_map([], |row| row.get::<_, i32>(0))?.count();
+            count > 0
+        };
+        
+        if exists {
+            return Ok(());
+        }
+        
+        log::info!("Migrating dual_pairs to dual_pairs_v2...");
+        
+        // Create new table and aggregate data
+        self.conn.execute_batch(
+            "
+            CREATE TABLE dual_pairs_v2 (
+                id TEXT PRIMARY KEY,
+                account_sid TEXT NOT NULL UNIQUE,
+                account_username TEXT NOT NULL,
+                approvers TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            
+            INSERT INTO dual_pairs_v2 (id, account_sid, account_username, approvers, enabled, created_at, updated_at)
+            SELECT 
+                account_sid as id,
+                account_sid,
+                account_username,
+                json_group_array(json_object(
+                    'sid', approver_sid,
+                    'username', approver_username,
+                    'enabled', enabled
+                )) as approvers,
+                MAX(enabled),
+                MIN(created_at),
+                MAX(updated_at)
+            FROM dual_pairs
+            GROUP BY account_sid;
+            "
+        )?;
+        
+        // Rename old table for backup
+        self.conn.execute_batch("ALTER TABLE dual_pairs RENAME TO dual_pairs_old;")?;
+        log::info!("Migration completed successfully.");
+        
+        Ok(())
+    }
+
     // ========================================================================
     // Dual Pairs CRUD
-    // ========================================================================
+    // ====================================================================
 
     /// Add a new dual-account pair
     pub fn add_dual_pair(
@@ -271,6 +361,183 @@ impl Database {
         Ok(())
     }
 
+    // ========================================================================
+    // Dual Pairs v2 CRUD (one-to-many)
+    // ========================================================================
+
+    /// Get all accounts with their approvers
+    pub fn get_all_accounts(&self) -> SqliteResult<Vec<DualPairV2Record>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, account_sid, account_username, approvers, enabled, created_at, updated_at
+             FROM dual_pairs_v2 ORDER BY created_at DESC"
+        )?;
+
+        let records = stmt.query_map([], |row| {
+            Ok(DualPairV2Record {
+                id: row.get(0)?,
+                account_sid: row.get(1)?,
+                account_username: row.get(2)?,
+                approvers: row.get(3)?,
+                enabled: row.get::<_, i32>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+
+        records.collect()
+    }
+
+    /// Add approver to existing account
+    pub fn add_approver_to_account(
+        &self,
+        account_sid: &str,
+        approver_sid: &str,
+        approver_username: &str,
+    ) -> SqliteResult<bool> {
+        // Check if account exists
+        let exists = self.conn.query_row(
+            "SELECT COUNT(*) FROM dual_pairs_v2 WHERE account_sid = ?1",
+            params![account_sid],
+            |row| row.get::<_, i64>(0)
+        )? > 0;
+
+        if !exists {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+
+        // Read current approvers
+        let existing = self.conn.query_row(
+            "SELECT approvers FROM dual_pairs_v2 WHERE account_sid = ?1",
+            params![account_sid],
+            |row| row.get::<_, String>(0)
+        )?;
+
+        let mut list: Vec<serde_json::Value> = match serde_json::from_str(&existing) {
+            Ok(v) => v,
+            Err(_) => return Err(rusqlite::Error::QueryReturnedNoRows),
+        };
+
+        // Check duplicate
+        let already = list.iter().any(|a| a["sid"].as_str() == Some(approver_sid));
+        if already {
+            return Ok(false);
+        }
+
+        // Add new approver
+        list.push(serde_json::json!({
+            "sid": approver_sid,
+            "username": approver_username,
+            "enabled": true
+        }));
+
+        let new_json = match serde_json::to_string(&list) {
+            Ok(s) => s,
+            Err(_) => return Err(rusqlite::Error::QueryReturnedNoRows),
+        };
+        self.conn.execute(
+            "UPDATE dual_pairs_v2 SET approvers = ?1, updated_at = datetime('now') WHERE account_sid = ?2",
+            params![new_json, account_sid],
+        )?;
+
+        Ok(true)
+    }
+
+    /// Remove approver from account
+    pub fn remove_approver_from_account(
+        &self,
+        account_sid: &str,
+        approver_sid: &str,
+    ) -> SqliteResult<bool> {
+        let existing = self.conn.query_row(
+            "SELECT approvers FROM dual_pairs_v2 WHERE account_sid = ?1",
+            params![account_sid],
+            |row| row.get::<_, String>(0)
+        )?;
+
+        let mut list: Vec<serde_json::Value> = match serde_json::from_str(&existing) {
+            Ok(v) => v,
+            Err(_) => return Err(rusqlite::Error::QueryReturnedNoRows),
+        };
+
+        let original_len = list.len();
+        list.retain(|a| a["sid"].as_str() != Some(approver_sid));
+
+        if list.len() == original_len {
+            return Ok(false);
+        }
+
+        let new_json = match serde_json::to_string(&list) {
+            Ok(s) => s,
+            Err(_) => return Err(rusqlite::Error::QueryReturnedNoRows),
+        };
+        self.conn.execute(
+            "UPDATE dual_pairs_v2 SET approvers = ?1, updated_at = datetime('now') WHERE account_sid = ?2",
+            params![new_json, account_sid],
+        )?;
+
+        Ok(true)
+    }
+
+    /// Enable or disable entire account pairing rule
+    pub fn set_account_enabled(&self, account_sid: &str, enabled: bool) -> SqliteResult<()> {
+        self.conn.execute(
+            "UPDATE dual_pairs_v2 SET enabled = ?1, updated_at = datetime('now') WHERE account_sid = ?2",
+            params![enabled as i32, account_sid],
+        )?;
+        Ok(())
+    }
+
+    /// Delete entire account pairing rule
+    pub fn remove_account_pair(&self, account_sid: &str) -> SqliteResult<bool> {
+        let affected = self.conn.execute(
+            "DELETE FROM dual_pairs_v2 WHERE account_sid = ?1",
+            params![account_sid],
+        )?;
+        Ok(affected > 0)
+    }
+
+    /// Create a new account pair (empty approvers list)
+    pub fn create_account_pair(
+        &self,
+        account_sid: &str,
+        account_username: &str,
+    ) -> SqliteResult<DualPairV2Record> {
+        use chrono::Local;
+        
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        
+        // Check if already exists
+        let exists = self.conn.query_row(
+            "SELECT id FROM dual_pairs_v2 WHERE account_sid = ?1",
+            params![account_sid],
+            |row| row.get::<_, String>(0),
+        ).ok();
+        
+        if let Some(_) = exists {
+            return Err(rusqlite::Error::QueryReturnedNoRows); // Use NoRows to indicate conflict
+        }
+        
+        // Create empty approvers array
+        let empty_approvers = serde_json::to_string(&Vec::<serde_json::Value>::new())
+            .unwrap_or_else(|e| panic!("JSON serialization failed: {}", e));
+        
+        self.conn.execute(
+            "INSERT INTO dual_pairs_v2 (id, account_sid, account_username, approvers, enabled, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
+            params![id, account_sid, account_username, empty_approvers, now.clone()],
+        )?;
+
+        Ok(DualPairV2Record {
+            id,
+            account_sid: account_sid.to_string(),
+            account_username: account_username.to_string(),
+            approvers: empty_approvers,
+            enabled: true,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
     // ========================================================================
     // Emergency Accounts
     // ========================================================================

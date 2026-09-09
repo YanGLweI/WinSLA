@@ -24,6 +24,23 @@ export interface DualPair {
   updated_at: string
 }
 
+// v2 接口定义 (one-to-many pairing)
+export interface ApproverInfo {
+  sid: string
+  username: string
+  enabled: boolean
+}
+
+export interface DualPairV2 {
+  id: string
+  account_sid: string        // 主账号 SID
+  account_username: string   // 主账号用户名
+  approvers: ApproverInfo[]  // 审批人数组
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface AddPairResponse {
   pair: DualPair
   auto_disabled_default_tile: boolean   // 是否自动禁用了默认 Tile
@@ -93,6 +110,19 @@ export const getStatus = () => api.get<ServiceStatus>('/status')
 export const getPairs = () => api.get<DualPair[]>('/pairs')
 export const addPair = (data: Partial<DualPair>) => api.post('/pairs', data)
 export const deletePair = (id: string) => api.delete(`/pairs/${id}`)
+
+// v2 API methods for one-to-many pairing
+export const getAccounts = () => api.get<DualPairV2[]>('/accounts')
+export const createAccount = (accountSid: string, accountUsername: string) => 
+  api.post<DualPairV2>('/accounts', { account_sid: accountSid, account_username: accountUsername })
+export const addApprover = (accountSid: string, approverSid: string, approverUsername: string) => 
+  api.post<void>('/accounts/approvers', { account_sid: accountSid, approver_sid: approverSid, approver_username: approverUsername })
+export const removeApprover = (accountSid: string, approverSid: string) => 
+  api.delete<void>(`/accounts/${accountSid}/approvers/${approverSid}`)
+export const toggleAccountEnabled = (accountSid: string, enabled: boolean) => 
+  api.put<DualPairV2>(`/accounts/${accountSid}/enable`, { enabled })
+export const deleteAccountPair = (accountSid: string) => 
+  api.delete<void>(`/accounts/${accountSid}`)
 export const getEmergency = () => api.get<EmergencyAccount[]>('/emergency')
 export const addEmergency = (data: Partial<EmergencyAccount>) => api.post('/emergency', data)
 export const deleteEmergency = (id: string) => api.delete(`/emergency/${id}`)

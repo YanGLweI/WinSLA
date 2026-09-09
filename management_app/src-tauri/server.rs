@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode, Uri},
     response::{Html, IntoResponse, Json, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -25,11 +25,29 @@ pub struct ComputerInfo {
     pub domain: String,
 }
 
+// ============================================================================
+// Request/Response Types for one-to-many pairing (v2)
+// ============================================================================
+
+#[derive(Deserialize)]
+struct AddApproverRequest {
+    account_sid: String,
+    approver_sid: String,
+    approver_username: String,
+}
+
 /// Create the axum router with all API routes
 pub fn create_router(db: AppState) -> Router {
     Router::new()
         .route("/api/status", get(get_status))
-        .route("/api/pairs", get(list_pairs).post(add_pair))
+        // v2 endpoints (one-to-many)
+        .route("/api/accounts", get(list_accounts).post(create_account))
+        .route("/api/accounts/approvers", post(add_approver))
+        .route("/api/accounts/{account_sid}/approvers/{approver_sid}", delete(remove_approver))
+        .route("/api/accounts/{account_sid}/enable", put(toggle_account_enable))
+        .route("/api/accounts/{account_sid}", delete(delete_account_pair))
+        // Keep old endpoints for backward compatibility (until frontend is updated)
+        .route("/api/pairs", get(list_accounts).post(add_pair))
         .route("/api/pairs/{id}", delete(delete_pair))
         .route("/api/emergency", get(list_emergency).post(add_emergency))
         .route("/api/emergency/{id}", delete(delete_emergency))
@@ -76,10 +94,10 @@ async fn get_status(State(db): State<AppState>) -> Json<commands::ServiceStatus>
     })
 }
 
-async fn list_pairs(State(db): State<AppState>) -> impl IntoResponse {
+async fn list_accounts(State(db): State<AppState>) -> impl IntoResponse {
     let db = db.lock().unwrap();
-    match db.get_all_dual_pairs() {
-        Ok(pairs) => Json(pairs).into_response(),
+    match db.get_all_accounts() {
+        Ok(accounts) => Json(accounts).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -183,6 +201,115 @@ async fn delete_pair(State(db): State<AppState>, Path(id): Path<String>) -> impl
     }
 }
 
+// ============================================================================
+// v2 Handlers (one-to-many pairing)
+// ============================================================================
+
+#[derive(Deserialize)]
+struct CreateAccountRequest {
+    account_sid: String,
+    account_username: String,
+}
+
+async fn create_account(State(db): State<AppState>, Json(req): Json<CreateAccountRequest>) -> impl IntoResponse {
+    use serde_json::json;
+    
+    let db = db.lock().unwrap();
+    
+    // 检查是否为第一条配对
+    let existing_accounts = match db.get_all_accounts() {
+        Ok(accounts) => accounts,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    
+    let account = match db.create_account_pair(&req.account_sid, &req.account_username) {
+        Ok(account) => account,
+        Err(_) => return (StatusCode::CONFLICT, "Account already exists").into_response(),
+    };
+    
+    // 如果这是第一条配对，自动禁用默认 Tile 并返回提示信息
+    if existing_accounts.is_empty() {
+        let mut policy_config = db.get_policy().unwrap_or_default();
+        
+        if policy_config.default_tile_enabled {
+            // 自动设置为禁用
+            policy_config.default_tile_enabled = false;
+            let _ = db.save_policy(&policy_config);
+            drop(db);
+            
+            // 同时写入注册表，确保策略立即生效
+            #[cfg(windows)]
+            {
+                if let Err(e) = write_policy_to_registry(&policy_config) {
+                    eprintln!("Warning: Failed to update registry when adding first account: {}", e);
+                }
+            }
+            
+            // 返回额外信息供前端显示提示
+            return Json(json!({
+                "account": account,
+                "auto_disabled_default_tile": true,
+                "should_configure_emergency": true
+            })).into_response();
+        }
+    }
+    
+    // 非第一条配对，正常响应
+    Json(account).into_response()
+}
+
+// ============================================================================
+// v2 Handlers (one-to-many pairing)
+// ============================================================================
+
+async fn add_approver(State(db): State<AppState>, Json(req): Json<AddApproverRequest>) -> impl IntoResponse {
+    let db = db.lock().unwrap();
+    match db.add_approver_to_account(&req.account_sid, &req.approver_sid, &req.approver_username) {
+        Ok(true) => StatusCode::CREATED.into_response(),
+        Ok(false) => (StatusCode::CONFLICT, "Approver already exists").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn remove_approver(State(db): State<AppState>, Path((account_sid, approver_sid)): Path<(String, String)>) -> impl IntoResponse {
+    let db = db.lock().unwrap();
+    match db.remove_approver_from_account(&account_sid, &approver_sid) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "Approver not found").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn toggle_account_enable(
+    State(db): State<AppState>, 
+    Path(account_sid): Path<String>, 
+    Json(enabled_payload): Json<EnabledPayload>
+) -> impl IntoResponse {
+    let db = db.lock().unwrap();
+    let account_sid = account_sid.as_str();
+    // ✅ 将整数转换为布尔值
+    let enabled = enabled_payload.enabled != 0;
+    
+    match db.set_account_enabled(account_sid, enabled) {
+        Ok(_) => Json(serde_json::json!({"account_sid": account_sid, "enabled": enabled})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn delete_account_pair(State(db): State<AppState>, Path(account_sid): Path<String>) -> impl IntoResponse {
+    let db = db.lock().unwrap();
+    
+    match db.remove_account_pair(&account_sid) {
+        Ok(true) => {
+            // ✅ Bug #4: 删除后显示提示，告知用户需要手动去策略配置页面启用默认 Tile
+            let response_data = serde_json::json!({"deleted": true});
+            (StatusCode::NO_CONTENT, Json(response_data)).into_response()
+        },
+        Ok(false) => (StatusCode::NOT_FOUND, "Account not found").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 async fn list_emergency(State(db): State<AppState>) -> impl IntoResponse {
     let db = db.lock().unwrap();
     match db.get_emergency_accounts() {
@@ -197,6 +324,11 @@ struct AddEmergencyRequest {
     username: String,
     #[serde(default)]
     reason: String,
+}
+
+#[derive(Deserialize)]
+struct EnabledPayload {
+    enabled: i64,  // ✅ 改为接收整数 (0/1)，而不是布尔值
 }
 
 async fn add_emergency(State(db): State<AppState>, Json(req): Json<AddEmergencyRequest>) -> impl IntoResponse {

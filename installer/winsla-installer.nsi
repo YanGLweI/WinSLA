@@ -1,24 +1,23 @@
 ﻿; WinSLA - Windows Dual-Account Authentication System
-; NSIS Installer Script v2.2.5
-; Fixed: Password expired dialog support
+; NSIS Installer Script v2.2.6
+; Feature: One-to-many pairing relationship support
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"
 
 ; ─── 基本信息 ───────────────────────────────────────────────
-Name "WinSLA v2.2.5"
-OutFile "WinSLA-v2.2.5-Setup.exe"
+Name "WinSLA v2.2.7"
+OutFile "WinSLA-v2.2.7-Setup.exe"
 InstallDir "$PROGRAMFILES64\WinSLA"
 InstallDirRegKey HKLM "Software\WinSLA" "InstallDir"
 RequestExecutionLevel admin
 Unicode true
 
 ; ─── 版本信息 ───────────────────────────────────────────────
-VIProductVersion "2.2.5.0"
-VIAddVersionKey "ProductName" "WinSLA"
-VIAddVersionKey "FileVersion" "2.2.5"
-VIAddVersionKey "FileDescription" "WinSLA - Windows Dual-Account Authentication System"
+VIProductVersion "2.2.7.0"
+VIAddVersionKey "FileVersion" "2.2.7"
+VIAddVersionKey "FileDescription" "WinSLA - Windows Dual-Account Authentication System v2.2.7"
 VIAddVersionKey "LegalCopyright" "MIT License - 2026 ylw"
 
 ; ─── 界面配置 ───────────────────────────────────────────────
@@ -71,7 +70,7 @@ Section "Core Files" SecCore
 
     ; 写入安装路径到注册表
     WriteRegStr HKLM "Software\WinSLA" "InstallDir" "$INSTDIR"
-    WriteRegStr HKLM "Software\WinSLA" "Version" "2.2.5"
+    WriteRegStr HKLM "Software\WinSLA" "Version" "2.2.7"
 
     ; 创建卸载程序
     WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -80,7 +79,7 @@ Section "Core Files" SecCore
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "UninstallString" "$INSTDIR\uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \\
-        "DisplayVersion" "2.2.5"
+        "DisplayVersion" "2.2.7"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "Publisher" "ylw"
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \

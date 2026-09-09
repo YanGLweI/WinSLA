@@ -327,7 +327,7 @@ pub(crate) fn extract_bare_username(input: &str) -> String {
 pub async fn check_pairing_rule(account_username: &str, approver_username: &str) -> Result<(), AuthError> {
     warn!("Checking pairing rules: account={}, approver={}", account_username, approver_username);
     
-    // Read all enabled pairing rules from shared database
+    // Read all accounts with their approvers (v2 structure)
     let audit_db = match AuditDb::open() {
         Ok(db) => db,
         Err(e) => {
@@ -336,7 +336,7 @@ pub async fn check_pairing_rule(account_username: &str, approver_username: &str)
         }
     };
     
-    let pairs = match audit_db.get_enabled_pairs() {
+    let pairs = match audit_db.get_all_accounts() {
         Ok(pairs) => pairs,
         Err(e) => {
             warn!("Failed to read pairing rules: {}. Allowing login anyway.", e);
@@ -344,10 +344,7 @@ pub async fn check_pairing_rule(account_username: &str, approver_username: &str)
         }
     };
     
-    // If no pairing rules are configured, reject dual-auth login and direct
-    // users to the Windows default tile (which stays enabled until the first
-    // pairing rule is created). This prevents arbitrary domain-account pairs
-    // from bypassing the dual-control policy on unconfigured machines.
+    // If no pairing rules are configured, reject dual-auth login
     if pairs.is_empty() {
         warn!("No pairing rules configured, rejecting dual-auth login");
         return Err(AuthError::InvalidCredentials(
@@ -359,12 +356,28 @@ pub async fn check_pairing_rule(account_username: &str, approver_username: &str)
     let account_bare = extract_bare_username(account_username);
     let approver_bare = extract_bare_username(approver_username);
     
-    // Check if current username combination is in valid pairs (strict order: account + approver)
-    for (_account_sid, _approver_sid, pair_account_name, pair_approver_name) in &pairs {
-        if extract_bare_username(pair_account_name) == account_bare
-            && extract_bare_username(pair_approver_name) == approver_bare {
-            info!("Pairing rule matched: {} (account) + {} (approver)", pair_account_name, pair_approver_name);
-            return Ok(());
+    // Check if current username combination is in valid pairs
+    for (account_sid, account_username, approvers_json) in &pairs {
+        if extract_bare_username(account_username) != account_bare {
+            continue;
+        }
+        
+        // Parse JSON approvers array
+        let approvers: Vec<serde_json::Value> = match serde_json::from_str(approvers_json) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to parse approvers JSON for {}: {}", account_username, e);
+                continue;
+            }
+        };
+        
+        // Check if approver is in the list
+        for approver in &approvers {
+            let name = approver["username"].as_str().unwrap_or("");
+            if extract_bare_username(name) == approver_bare {
+                info!("Pairing rule matched: {} + {}", account_username, name);
+                return Ok(());
+            }
         }
     }
     

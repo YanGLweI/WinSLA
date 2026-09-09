@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/language-Rust-orange" alt="Language" />
-  <img src="https://img.shields.io/badge/version-2.2.5-yellow" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.2.7-yellow" alt="Version" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
 </p>
 
@@ -148,7 +148,7 @@ cargo build --release
 
 #### 方式一：NSIS 安装程序（推荐）
 
-从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.2.5-Setup.exe`，以管理员身份运行。安装程序自动完成：
+从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.2.7-Setup.exe`，以管理员身份运行。安装程序自动完成：
 
 - 复制 DLL/EXE 到 `C:\Program Files\WinSLA`
 - 注册 Credential Provider CLSID 到 64 位注册表视图

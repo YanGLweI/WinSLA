@@ -1,0 +1,44 @@
+   Compiling winsla-management v2.2.6 (C:\Users\YLW\Documents\PJ\WinSLA\management_app\src-tauri)
+warning: unused import: `DailyStat`
+  --> management_app\src-tauri\server.rs:14:33
+   |
+14 | use crate::database::{Database, DailyStat};
+   |                                 ^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::ffi::OsString`
+   --> management_app\src-tauri\server.rs:321:9
+    |
+321 |     use std::ffi::OsString;
+    |         ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::os::windows::ffi::OsStringExt`
+   --> management_app\src-tauri\server.rs:322:9
+    |
+322 |     use std::os::windows::ffi::OsStringExt;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+   --> management_app\src-tauri\database.rs:514:19
+    |
+514 |             |row| row.get(0).ok(),
+    |                   ^^^^^^^^^^^^^^^ expected `Result<_, Error>`, found `Option<_>`
+    |
+    = note: expected enum `Result<_, rusqlite::Error>`
+               found enum `std::option::Option<_>`
+help: consider using `Option::expect` to unwrap the `std::option::Option<_>` value, panicking if the value is an `Option::None`
+    |
+514 |             |row| row.get(0).ok().expect("REASON"),
+    |                                  +++++++++++++++++
+
+error[E0599]: no variant, associated function, or constant named `FromSqlFailure` found for enum `rusqlite::Error` in the current scope
+   --> management_app\src-tauri\database.rs:525:51
+    |
+525 |             Err(e) => return Err(rusqlite::Error::FromSqlFailure(e.to_string())),
+    |                                                   ^^^^^^^^^^^^^^ variant, associated function, or constant not found in `rusqlite::Error`
+
+Some errors have detailed explanations: E0308, E0599.
+For more information about an error, try `rustc --explain E0308`.
+warning: `winsla-management` (lib) generated 3 warnings
+error: could not compile `winsla-management` (lib) due to 2 previous errors; 3 warnings emitted

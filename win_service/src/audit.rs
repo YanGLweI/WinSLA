@@ -200,6 +200,23 @@ impl AuditDb {
         Ok(())
     }
 
+    /// Get all accounts with their approvers (v2 structure)
+    pub fn get_all_accounts(&self) -> Result<Vec<(String, String, String)>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT account_sid, account_username, approvers FROM dual_pairs_v2 WHERE enabled = 1"
+        )?;
+
+        let pairs = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+
+        pairs.collect()
+    }
+
     /// Record an authentication attempt into the shared database.
     pub fn record_auth(
         &self,
