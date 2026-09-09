@@ -216,45 +216,13 @@ async fn create_account(State(db): State<AppState>, Json(req): Json<CreateAccoun
     
     let db = db.lock().unwrap();
     
-    // 检查是否为第一条配对
-    let existing_accounts = match db.get_all_accounts() {
-        Ok(accounts) => accounts,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    };
-    
     let account = match db.create_account_pair(&req.account_sid, &req.account_username) {
         Ok(account) => account,
         Err(_) => return (StatusCode::CONFLICT, "Account already exists").into_response(),
     };
     
-    // 如果这是第一条配对，自动禁用默认 Tile 并返回提示信息
-    if existing_accounts.is_empty() {
-        let mut policy_config = db.get_policy().unwrap_or_default();
-        
-        if policy_config.default_tile_enabled {
-            // 自动设置为禁用
-            policy_config.default_tile_enabled = false;
-            let _ = db.save_policy(&policy_config);
-            drop(db);
-            
-            // 同时写入注册表，确保策略立即生效
-            #[cfg(windows)]
-            {
-                if let Err(e) = write_policy_to_registry(&policy_config) {
-                    eprintln!("Warning: Failed to update registry when adding first account: {}", e);
-                }
-            }
-            
-            // 返回额外信息供前端显示提示
-            return Json(json!({
-                "account": account,
-                "auto_disabled_default_tile": true,
-                "should_configure_emergency": true
-            })).into_response();
-        }
-    }
-    
-    // 非第一条配对，正常响应
+    // ✅ Bug 修复：不再在创建账号时自动禁用默认 Tile，改为在添加审批人时处理
+    // 只返回普通响应
     Json(account).into_response()
 }
 
@@ -263,9 +231,62 @@ async fn create_account(State(db): State<AppState>, Json(req): Json<CreateAccoun
 // ============================================================================
 
 async fn add_approver(State(db): State<AppState>, Json(req): Json<AddApproverRequest>) -> impl IntoResponse {
-    let db = db.lock().unwrap();
-    match db.add_approver_to_account(&req.account_sid, &req.approver_sid, &req.approver_username) {
-        Ok(true) => StatusCode::CREATED.into_response(),
+    
+    let result = {
+        let db = db.lock().unwrap();
+        db.add_approver_to_account(&req.account_sid, &req.approver_sid, &req.approver_username)
+    };
+    
+    match result {
+        Ok(true) => {
+            // ✅ Bug 修复：检查是否为第一条完整配对（有审批人的账号）并禁用 default tile
+            let should_disable_tile = {
+                let db_guard = db.lock().unwrap();
+                
+                // 获取该账号的 approvers 列表 - 通过 get_all_accounts 来获取
+                let all_accounts = db_guard.get_all_accounts().unwrap_or_default();
+                
+                // 找到当前账号的 approvers
+                let current_account = all_accounts.iter()
+                    .find(|acc| acc.account_sid == req.account_sid);
+                
+                // 检查当前账号是否有审批人
+                let has_approvers_in_this_account = current_account.map(|acc| {
+                    serde_json::from_str::<Vec<serde_json::Value>>(&acc.approvers)
+                        .ok()
+                        .map(|v| !v.is_empty())
+                        .unwrap_or(false)
+                }).unwrap_or(false);
+                
+                // 检查是否只有这一个账号且它有审批人
+                has_approvers_in_this_account && all_accounts.len() == 1
+            };  // db_guard 在这里被 drop
+            
+            // ✅ 如果是第一条完整配对，禁用默认 Tile
+            if should_disable_tile {
+                let mut policy_config = crate::database::PolicyConfig::default();
+                let db_guard = db.lock().unwrap();
+                
+                // 读取现有配置
+                if let Ok(cfg) = db_guard.get_policy() {
+                    policy_config = cfg;
+                }
+                
+                if policy_config.default_tile_enabled {
+                    policy_config.default_tile_enabled = false;
+                    let _ = db_guard.save_policy(&policy_config);
+                    
+                    #[cfg(windows)]
+                    {
+                        if let Err(e) = write_policy_to_registry(&policy_config) {
+                            eprintln!("Warning: Failed to update registry when adding first approver: {}", e);
+                        }
+                    }
+                }
+            }
+            
+            StatusCode::CREATED.into_response()
+        },
         Ok(false) => (StatusCode::CONFLICT, "Approver already exists").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

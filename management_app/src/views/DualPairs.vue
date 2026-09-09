@@ -10,7 +10,8 @@ import {
   toggleAccountEnabled,
   deleteAccountPair,
   type DualPairV2,
-  type ApproverInfo
+  type ApproverInfo,
+  updatePolicy
 } from '../api'
 
 const accounts = ref<DualPairV2[]>([])
@@ -140,72 +141,37 @@ async function handleAddAccount() {
   }
   
   try {
-    // 第一步：创建主账号
-    const accountResponse = await createAccount(
+    // 第一步：创建主账号（不再自动禁用 default tile）
+    await createAccount(
       form.value.account_sid,
       form.value.account_username
     )
     
-    // ✅ Bug #1 修复：只在审批人添加成功后才弹应急提醒，创建主账号时不提示
-    if (form.value.validatedApprover && form.value.approver_sid) {
-      // ✅ 处理嵌套响应和直接响应的情况
-      const responseData = accountResponse.data
-      const accountSid = responseData.account ? responseData.account.account_sid : responseData.account_sid
-      
-      await addApprover(
-        accountSid,
-        form.value.approver_sid,
-        form.value.approver_username
-      )
-      ElMessage.success('主账号与审批人已成功关联')
-      form.value.approver_username = ''
-      form.value.approver_password = ''
-      form.value.approver_sid = ''
-      form.value.validatedApprover = false
-      load()
-      
-      // ✅ 审批人添加成功后再弹应急提醒
-      const result = responseData
-      if (result.auto_disabled_default_tile && result.should_configure_emergency) {
-        ElMessageBox.confirm(
-          '已自动禁用 Windows 默认登录 Tile，为保障极端情况下仍可访问系统，强烈建议配置应急账号。\n\n确定前往应急账号配置页面吗？',
-          '配置应急账号提醒',
-          {
-            confirmButtonText: '立即配置',
-            cancelButtonText: '稍后处理（将重新启用默认 Tile）',
-            type: 'warning'
-          }
-        ).then(() => {
-          window.location.hash = '#/emergency'
-        }).catch(async () => {
-          await toggleAccountEnabled(accountSid, true)
-          await load()
-          ElMessage.success('默认 Tile 已重新启用，保障您可以正常登录')
-        })
-      }
-    } else {
-      // ⚠️ 关键修复：处理第一条配对的嵌套响应和后续配对的直接响应
-      const responseData = accountResponse.data
-      
-      // ✅ 判断是嵌套响应（第一条配对）还是直接响应（后续配对）
-      const createdAccount = responseData.account ? responseData.account : responseData
-      
-      // 先设置值，再打开对话框，触发更新
-      currentAccount.value = { ...createdAccount }  // ✅ 解构复制
-      addAccountDialog.value = false
-      addApproverDialog.value = true
-      
-      await nextTick()
-      await nextTick()
-      
-      await nextTick()
-      setTimeout(() => {
-        const inputEl = document.querySelector('#approver-username-input')
-        if (inputEl) inputEl.focus()
-      }, 100)
-      
-      load()
+    ElMessage.success('主账号已创建')
+    
+    // ✅ 直接打开审批人对话框，等待用户添加审批人
+    addAccountDialog.value = false
+    addApproverDialog.value = true
+    
+    // 先设置值，再打开对话框，触发更新
+    currentAccount.value = {
+      account_sid: form.value.account_sid,
+      account_username: form.value.account_username,
+      approvers: '[]',
+      enabled: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     }
+    
+    await nextTick()
+    await nextTick()
+    await nextTick()
+    setTimeout(() => {
+      const inputEl = document.querySelector('#approver-username-input')
+      if (inputEl) inputEl.focus()
+    }, 100)
+    
+    load()
   } catch (e: any) {
     if (e.response?.status === 409) {
       ElMessage.error('该主账号已存在')
@@ -260,24 +226,61 @@ async function handleConfirmAddApprover() {
     )
     ElMessage.success('审批人已添加到主账号')
     addApproverDialog.value = false
-    load()
     
-    // ✅ Bug #1 修复：首次创建配对后立即弹出应急提醒（使用本地变量跟踪）
-    const { getAccounts } = await import('../api')
-    const { data: accounts } = await getAccounts()
-    // ✅ 只有在添加第一条完整配对关系时才提示
-    if (accounts && accounts.length === 1) {
+    // 重新加载数据
+    await load()
+    
+    // ✅ Bug 修复：检查是否为第一条完整配对，如果是则禁用 default tile 并提示配置应急账号
+    const { getAccounts, getPolicy } = await import('../api')
+    const accountsResponse = await getAccounts()
+    const policyResponse = await getPolicy()
+    
+    const accounts = accountsResponse.data || []
+    const policyData = policyResponse.data || {}
+    
+    // 判断是否有至少一个审批人的完整配对
+    const hasAnyCompletePair = accounts.some(acc => {
+      let approversArray = []
+      try {
+        if (typeof acc.approvers === 'string') {
+          approversArray = JSON.parse(acc.approvers)
+        } else if (Array.isArray(acc.approvers)) {
+          approversArray = acc.approvers
+        }
+      } catch (e) {
+        console.error('Failed to parse approvers:', e)
+      }
+      return approversArray.length > 0
+    })
+    
+    // ✅ 只有当这是第一个完整配对且 default_tile_enabled 仍为 true 时，才禁用并提示
+    if (accounts.length === 1 && hasAnyCompletePair && policyData.default_tile_enabled !== false) {
+      // 自动禁用 default tile
+      const updatedPolicy = {
+        ...policyData,
+        default_tile_enabled: false
+      }
+      await updatePolicy(updatedPolicy)
+      
       ElMessageBox.confirm(
-        '已完成第一条配对规则配置。为保障极端情况下仍可访问系统，强烈建议配置应急账号。\n\n确定前往应急账号配置页面吗？',
+        '已自动禁用 Windows 默认登录 Tile。为保障极端情况下仍可访问系统，强烈建议配置应急账号。\n\n确定前往应急账号配置页面吗？',
         '配置应急账号提醒',
         {
           confirmButtonText: '立即配置',
-          cancelButtonText: '稍后处理',
+          cancelButtonText: '稍后处理（将重新启用默认 Tile）',
           type: 'warning'
         }
       ).then(() => {
         window.location.hash = '#/emergency'
-      }).catch(() => {})
+      }).catch(async () => {
+        // 如果用户取消，恢复启用 default tile
+        await updatePolicy({
+          ...policyData,
+          default_tile_enabled: true
+        })
+        await load()
+        ElMessage.success('默认 Tile 已重新启用，保障您可以正常登录')
+      })
     }
   } catch (e: any) {
     console.error('Add approver failed:', e.response?.status, e.response?.data, e.message)
