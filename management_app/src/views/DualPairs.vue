@@ -135,43 +135,35 @@ async function handleValidateApprover() {
 }
 
 async function handleAddAccount() {
-  if (!form.value.validatedAccount) {
-    ElMessage.warning('请先验证主账号')
+  if (!form.value.validatedAccount || !form.value.validatedApprover) {
+    ElMessage.warning('必须同时验证主账号和审批人才能创建')
+    return
+  }
+  
+  // ✅ Bug Fix: 校验主账号和审批人不能是同一个账号
+  if (form.value.account_sid === form.value.approver_sid) {
+    ElMessage.error('主账号和审批人必须是不同的账号')
     return
   }
   
   try {
-    // 第一步：创建主账号（不再自动禁用 default tile）
+    // ✅ Bug Fix: 一次性创建完整的配对规则 (主账号 + 第一个审批人)
     await createAccount(
       form.value.account_sid,
       form.value.account_username
     )
     
-    ElMessage.success('主账号已创建')
+    // 立即添加第一个审批人
+    await addApprover(
+      form.value.account_sid,
+      form.value.approver_sid,
+      form.value.approver_username
+    )
     
-    // ✅ 直接打开审批人对话框，等待用户添加审批人
+    ElMessage.success('主账号与审批人已成功关联')
     addAccountDialog.value = false
-    addApproverDialog.value = true
-    
-    // 先设置值，再打开对话框，触发更新
-    currentAccount.value = {
-      account_sid: form.value.account_sid,
-      account_username: form.value.account_username,
-      approvers: '[]',
-      enabled: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }
-    
-    await nextTick()
-    await nextTick()
-    await nextTick()
-    setTimeout(() => {
-      const inputEl = document.querySelector('#approver-username-input')
-      if (inputEl) inputEl.focus()
-    }, 100)
-    
     load()
+    resetAccountForm()
   } catch (e: any) {
     if (e.response?.status === 409) {
       ElMessage.error('该主账号已存在')
@@ -184,11 +176,9 @@ async function handleAddAccount() {
 // ✅ 防止 onMounted 自动触发 success message
 let isLoading = false
 
+// ✅ Bug Fix: 任何时候都应该可以添加审批人，不检查 enabled 状态
 async function handleOpenAddApprover(row: DualPairV2) {
-  if (!row.enabled) {
-    ElMessage.warning('请先启用该主账号规则')
-    return
-  }
+  // ✅ 移除了 if (!row.enabled) 检查，允许在任何状态下添加审批人
   
   // ⚠️ 关键修复：先清空之前的验证状态，再设置当前账号
   form.value.approver_username = ''
@@ -210,15 +200,18 @@ async function handleOpenAddApprover(row: DualPairV2) {
 }
 
 async function handleConfirmAddApprover() {
-  // 修改为检查 form.value.validatedApprover
   if (!currentAccount.value || !form.value.validatedApprover || !form.value.approver_sid) {
     ElMessage.warning('请先验证审批人账号')
     return
   }
   
+  // ✅ Bug Fix: 校验主账号和审批人不能是同一个账号
+  if (currentAccount.value.account_sid === form.value.approver_sid) {
+    ElMessage.error('主账号和审批人必须是不同的账号')
+    return
+  }
+  
   try {
-    console.log('Adding approver to:', currentAccount.value.account_sid, 'with approver:', form.value.approver_sid)
-    
     await addApprover(
       currentAccount.value.account_sid,
       form.value.approver_sid,
@@ -226,62 +219,7 @@ async function handleConfirmAddApprover() {
     )
     ElMessage.success('审批人已添加到主账号')
     addApproverDialog.value = false
-    
-    // 重新加载数据
-    await load()
-    
-    // ✅ Bug 修复：检查是否为第一条完整配对，如果是则禁用 default tile 并提示配置应急账号
-    const { getAccounts, getPolicy } = await import('../api')
-    const accountsResponse = await getAccounts()
-    const policyResponse = await getPolicy()
-    
-    const accounts = accountsResponse.data || []
-    const policyData = policyResponse.data || {}
-    
-    // 判断是否有至少一个审批人的完整配对
-    const hasAnyCompletePair = accounts.some(acc => {
-      let approversArray = []
-      try {
-        if (typeof acc.approvers === 'string') {
-          approversArray = JSON.parse(acc.approvers)
-        } else if (Array.isArray(acc.approvers)) {
-          approversArray = acc.approvers
-        }
-      } catch (e) {
-        console.error('Failed to parse approvers:', e)
-      }
-      return approversArray.length > 0
-    })
-    
-    // ✅ 只有当这是第一个完整配对且 default_tile_enabled 仍为 true 时，才禁用并提示
-    if (accounts.length === 1 && hasAnyCompletePair && policyData.default_tile_enabled !== false) {
-      // 自动禁用 default tile
-      const updatedPolicy = {
-        ...policyData,
-        default_tile_enabled: false
-      }
-      await updatePolicy(updatedPolicy)
-      
-      ElMessageBox.confirm(
-        '已自动禁用 Windows 默认登录 Tile。为保障极端情况下仍可访问系统，强烈建议配置应急账号。\n\n确定前往应急账号配置页面吗？',
-        '配置应急账号提醒',
-        {
-          confirmButtonText: '立即配置',
-          cancelButtonText: '稍后处理（将重新启用默认 Tile）',
-          type: 'warning'
-        }
-      ).then(() => {
-        window.location.hash = '#/emergency'
-      }).catch(async () => {
-        // 如果用户取消，恢复启用 default tile
-        await updatePolicy({
-          ...policyData,
-          default_tile_enabled: true
-        })
-        await load()
-        ElMessage.success('默认 Tile 已重新启用，保障您可以正常登录')
-      })
-    }
+    load()
   } catch (e: any) {
     console.error('Add approver failed:', e.response?.status, e.response?.data, e.message)
     if (e.response?.status === 409) {
@@ -299,8 +237,58 @@ async function handleRemoveApprover(accountSid: string, approverSid: string) {
   
   try {
     await removeApprover(accountSid, approverSid)
-    ElMessage.success('已删除')
-    load()
+    
+    // 重新加载数据
+    await load()
+    
+    // ✅ Bug 修复：检查是否还有剩余审批人
+    const account = accounts.value.find(a => a.account_sid === accountSid)
+    let remainingApprovers = []
+    if (account) {
+      try {
+        if (typeof account.approvers === 'string') {
+          remainingApprovers = JSON.parse(account.approvers)
+        } else if (Array.isArray(account.approvers)) {
+          remainingApprovers = account.approvers
+        }
+      } catch (e) {
+        console.error('Failed to parse approvers:', e)
+      }
+    }
+    
+    // 如果没有剩余审批人了，显示提示（后端会自动禁用）
+    if (remainingApprovers.length === 0) {
+      ElMessage.success(`已移除最后一个审批人，该配对规则已被自动禁用`)
+      
+      // 检查是否是最后一条完整配对（只有这一个账号且没有审批人）
+      const anyCompletePair = accounts.value.some(acc => {
+        try {
+          let arr = []
+          if (typeof acc.approvers === 'string') {
+            arr = JSON.parse(acc.approvers)
+          } else if (Array.isArray(acc.approvers)) {
+            arr = acc.approvers
+          }
+          return arr.length > 0
+        } catch (e) {
+          return false
+        }
+      })
+      
+      if (!anyCompletePair) {
+        // 启用 default tile
+        const { getPolicy, updatePolicy } = await import('../api')
+        const policyResponse = await getPolicy()
+        const policyData = policyResponse.data || {}
+        
+        await updatePolicy({
+          ...policyData,
+          default_tile_enabled: true
+        })
+        
+        ElMessage.success('所有配对规则无效，默认登录 Tile 已启用')
+      }
+    }
   } catch (e: any) {
     ElMessage.error('删除失败：' + e.message)
   }
@@ -387,6 +375,14 @@ function resetAccountForm() {
   }
 }
 
+// 重置审批人表单（仅清空审批人信息）
+function resetApproverForm() {
+  form.value.approver_username = ''
+  form.value.approver_password = ''
+  form.value.approver_sid = ''
+  form.value.validatedApprover = false
+}
+
 // 打开主账号对话框时重置表单
 function handleOpenAddAccount() {
   resetAccountForm()
@@ -395,18 +391,48 @@ function handleOpenAddAccount() {
 
 // Bug #3: 防止直接关闭审批人对话框，除非配置了至少一个审批人或取消禁用默认 tile
 async function handleBeforeCloseApproverDialog() {
-  // 如果还没有配置任何审批人，阻止关闭并提示用户
-  if (!currentAccount.value || !form.value.validatedApprover || !form.value.approver_sid) {
-    const shouldClose = await ElMessageBox.confirm(
-      '当前尚未配置任何审批人。关闭对话框后创建的第一条配对关系将无效，可能导致双控登录异常！\n\n是否仍然关闭？',
-      '警告：未配置审批人就关闭会导致双控登录异常',
+  if (!currentAccount.value) {
+    return true;
+  }
+  
+  const hasApprovedApproverInDatabase = currentAccount.value.approvers !== '[]';
+  
+  // 如果账号还没有添加任何审批人到数据库，显示确认提示
+  if (!hasApprovedApproverInDatabase) {
+    await ElMessageBox.confirm(
+      '您当前正在为新创建的主账号添加第一个审批人。\n\n如果现在关闭对话框，该配对规则将暂时没有审批人，但主账号已创建成功。您确定要关闭吗？',
+      '添加审批人提示',
       {
-        confirmButtonText: '仍要关闭',
-        cancelButtonText: '继续配置',
+        confirmButtonText: '关闭但不添加',
+        cancelButtonText: '继续添加审批人',
         type: 'warning'
       }
     )
-    return shouldClose
+    // 无论用户选择什么，都允许通过 × 关闭，实际禁用逻辑由 @close 处理
+    return true
+  }
+  
+  return true; // 已有审批人在数据库中，可以直接关闭
+}
+
+// ✅ 对话框关闭后的回调 - 在这里执行禁用逻辑
+async function handleApproverDialogClosed() {
+  // 检查是否是新创建的账号 (没有审批人在数据库中)
+  if (currentAccount.value && currentAccount.value.approvers === '[]') {
+    try {
+      const { toggleAccountEnabled } = await import('../api')
+      
+      // 禁用当前账号
+      await toggleAccountEnabled(currentAccount.value.account_sid, false)
+      
+      ElMessage.success(`已移除最后一个审批人，该配对规则已被自动禁用`)
+      
+      // 刷新数据以检查是否需要启用 default tile
+      await load()
+    } catch (e) {
+      console.error('Failed to disable account:', e)
+      ElMessage.warning('禁用规则失败，请手动在列表中操作')
+    }
   }
 }
 
@@ -469,11 +495,11 @@ onMounted(load)
       <!-- 操作 -->
       <el-table-column label="操作" width="160" align="center" fixed="right">
         <template #default="{ row }">
+          <!-- ✅ Bug Fix: 任何时候都应该可以添加审批人，不检查 enabled 状态 -->
           <el-button 
             size="small" 
             type="primary"
             @click="handleOpenAddApprover(row)"
-            :disabled="!row.enabled"
           >
             + 审批人
           </el-button>
@@ -491,7 +517,7 @@ onMounted(load)
     <!-- 新增主账号对话框 -->
     <el-dialog 
       v-model="addAccountDialog" 
-      title="新增主账号" 
+      title="新增主账号与审批人" 
       width="460px" 
       :close-on-click-modal="false"
     >
@@ -523,12 +549,42 @@ onMounted(load)
         </el-form-item>
         
         <el-form-item v-if="form.validatedAccount">
-          <el-tag type="success">主账号已验证，准备创建配对规则</el-tag>
+          <el-tag type="success">主账号已验证</el-tag>
+        </el-form-item>
+        
+        <el-divider content-position="left">审批人信息（第一个审批人）</el-divider>
+        
+        <el-form-item label="用户名">
+          <el-input 
+            v-model="form.approver_username" 
+            placeholder="bob 或 DOMAIN\bob 或 bob@domain.com"
+            @keydown.enter="handleValidateApprover"
+            id="approver-username-input"
+          />
+        </el-form-item>
+        
+        <el-form-item label="密码">
+          <el-input 
+            v-model="form.approver_password" 
+            type="password"
+            placeholder="请输入审批人密码"
+            @keydown.enter="handleValidateApprover"
+          />
         </el-form-item>
         
         <el-form-item>
-          <el-button type="success" @click="handleAddAccount" :disabled="!form.validatedAccount">
-            创建主账号
+          <el-button type="primary" @click="handleValidateApprover" :loading="validatingApprover">
+            验证审批人
+          </el-button>
+        </el-form-item>
+        
+        <el-form-item v-if="form.validatedApprover">
+          <el-tag type="success">审批人已验证</el-tag>
+        </el-form-item>
+        
+        <el-form-item>
+          <el-button type="success" @click="handleAddAccount" :disabled="!form.validatedAccount || !form.validatedApprover">
+            创建主账号与审批人
           </el-button>
           <el-button @click="addAccountDialog = false">取消</el-button>
         </el-form-item>
@@ -542,6 +598,7 @@ onMounted(load)
       width="460px" 
       :close-on-click-modal="false"
       :before-close="handleBeforeCloseApproverDialog"
+      @close="handleApproverDialogClosed"
     >
       <el-form label-width="80px" size="small">
         <el-divider content-position="left">审批人信息</el-divider>

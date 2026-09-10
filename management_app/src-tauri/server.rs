@@ -293,9 +293,74 @@ async fn add_approver(State(db): State<AppState>, Json(req): Json<AddApproverReq
 }
 
 async fn remove_approver(State(db): State<AppState>, Path((account_sid, approver_sid)): Path<(String, String)>) -> impl IntoResponse {
-    let db = db.lock().unwrap();
-    match db.remove_approver_from_account(&account_sid, &approver_sid) {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+    let result = {
+        let db = db.lock().unwrap();
+        db.remove_approver_from_account(&account_sid, &approver_sid)
+    };
+    
+    match result {
+        Ok(true) => {
+            // ✅ Bug 修复：检查是否还有剩余审批人
+            let should_disable_account = {
+                use rusqlite::Connection;
+                let db = db.lock().unwrap();
+                
+                // 获取该账号的 approvers 列表
+                let all_accounts = db.get_all_accounts().unwrap_or_default();
+                
+                // 找到当前账号的 approvers
+                let current_account = all_accounts.iter()
+                    .find(|acc| acc.account_sid == account_sid);
+                
+                // 检查当前账号是否还有审批人
+                let has_remaining_approvers = current_account.map(|acc| {
+                    serde_json::from_str::<Vec<serde_json::Value>>(&acc.approvers)
+                        .ok()
+                        .map(|v| !v.is_empty())
+                        .unwrap_or(false)
+                }).unwrap_or(false);
+                
+                !has_remaining_approvers
+            };
+            
+            if should_disable_account {
+                let db = db.lock().unwrap();
+                
+                // 禁用该账号
+                let _ = db.set_account_enabled(&account_sid, false);
+                
+                // 检查是否是最后一条完整配对
+                let all_accounts = db.get_all_accounts().unwrap_or_default();
+                let has_any_complete_pair = all_accounts.iter().any(|acc| {
+                    serde_json::from_str::<Vec<serde_json::Value>>(&acc.approvers)
+                        .ok()
+                        .map(|v| !v.is_empty())
+                        .unwrap_or(false)
+                });
+                
+                if !has_any_complete_pair {
+                    // 启用 default tile
+                    let mut policy_config = crate::database::PolicyConfig::default();
+                    if let Ok(cfg) = db.get_policy() {
+                        policy_config = cfg;
+                    }
+                    
+                    if !policy_config.default_tile_enabled {
+                        policy_config.default_tile_enabled = true;
+                        let _ = db.save_policy(&policy_config);
+                        
+                        #[cfg(windows)]
+                        {
+                            if let Err(e) = write_policy_to_registry(&policy_config) {
+                                eprintln!("Warning: Failed to update registry when enabling default tile after removing last approver: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            StatusCode::NO_CONTENT.into_response()
+        },
         Ok(false) => (StatusCode::NOT_FOUND, "Approver not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
