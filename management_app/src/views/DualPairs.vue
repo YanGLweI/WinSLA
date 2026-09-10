@@ -297,8 +297,60 @@ async function handleRemoveApprover(accountSid: string, approverSid: string) {
 async function handleToggleAccount(row: DualPairV2, newEnabled: boolean) {
   const action = newEnabled ? '启用' : '禁用'
   
+  // ✅ Debug: 打印初始状态
+  console.log('handleToggleAccount called:', { newEnabled, rowEnabled: row.enabled });
+  
+  // ✅ 如果尝试禁用且是唯一的启用规则，需要警告
+  if (!newEnabled && row.enabled) {
+    const enabledAccounts = accounts.value.filter(a => a.enabled).length;
+    
+    // 排除自己（即将被禁用的）
+    const otherEnabledRules = enabledAccounts - 1;
+    
+    // 检查是否有完整配对（有审批人的）
+    const hasOtherCompletePair = accounts.value.some(acc => {
+      if (acc.account_sid === row.account_sid || !acc.enabled) return false;
+      
+      let approversArray = []
+      try {
+        if (typeof acc.approvers === 'string') {
+          approversArray = JSON.parse(acc.approvers)
+        } else if (Array.isArray(acc.approvers)) {
+          approversArray = acc.approvers
+        }
+      } catch (e) {}
+      
+      return approversArray.length > 0
+    })
+    
+    // ✅ Debug: 打印调试信息
+    console.log('Debug toggle:', {
+      otherEnabledRules,
+      hasOtherCompletePair,
+      shouldShowWarning: (otherEnabledRules === 0 || !hasOtherCompletePair),
+      allAccounts: accounts.value.map(a => ({ sid: a.account_sid.substring(0, 10), enabled: a.enabled }))
+    });
+    
+    if (otherEnabledRules === 0 || !hasOtherCompletePair) {
+      const shouldContinue = await ElMessageBox.confirm(
+        `这是最后一条启用的配对规则。\n\n禁用后将无法使用双控登录，系统会启用 Windows 默认登录方式。\n\n确定要继续禁用吗？`,
+        '警告：最后一条启用规则',
+        {
+          confirmButtonText: '确认禁用',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+      
+      if (!shouldContinue) {
+        // 恢复 UI 状态
+        row.enabled = !newEnabled
+        return
+      }
+    }
+  }
+  
   try {
-    // ⚠️ 注意：后端期望 i64 而非 boolean，所以这里发送 Number(newEnabled) (0 或 1)
     console.log('Attempting to toggle account:', row.account_sid, 'to:', newEnabled ? 'enabled (true)' : 'disabled (false)')
     const response = await fetch(`/api/accounts/${encodeURIComponent(row.account_sid)}/enable`, {
       method: 'PUT',
@@ -483,7 +535,7 @@ onMounted(load)
       <el-table-column label="状态" width="80" align="center">
         <template #default="{ row }">
           <el-switch
-            v-model="row.enabled"
+            :model-value="row.enabled"
             @change="(value) => handleToggleAccount(row, Boolean(value))"
           />
         </template>

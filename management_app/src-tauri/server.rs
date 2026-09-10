@@ -377,7 +377,48 @@ async fn toggle_account_enable(
     let enabled = enabled_payload.enabled != 0;
     
     match db.set_account_enabled(account_sid, enabled) {
-        Ok(_) => Json(serde_json::json!({"account_sid": account_sid, "enabled": enabled})).into_response(),
+        Ok(_) => {
+            // ⚠️ 只有在禁用时才需要检查是否有其他可用规则
+            if !enabled {
+                // 获取所有规则
+                let all_accounts = db.get_all_accounts().unwrap_or_default();
+                
+                // 计算禁用后还有多少条完整的启用规则（排除当前被禁用的）
+                let has_any_complete_pair = all_accounts.iter().any(|acc| {
+                    if acc.account_sid == account_sid { return false; }
+                    
+                    serde_json::from_str::<Vec<serde_json::Value>>(&acc.approvers)
+                        .ok()
+                        .map(|v| !v.is_empty() && acc.enabled)
+                        .unwrap_or(false)
+                });
+                
+                // 如果没有完整配对，启用 default tile 避免死锁
+                if !has_any_complete_pair {
+                    let mut policy_config = crate::database::PolicyConfig::default();
+                    if let Ok(cfg) = db.get_policy() {
+                        policy_config = cfg;
+                    }
+                    
+                    if !policy_config.default_tile_enabled {
+                        policy_config.default_tile_enabled = true;
+                        let _ = db.save_policy(&policy_config);
+                        
+                        #[cfg(windows)]
+                        {
+                            if let Err(e) = write_policy_to_registry(&policy_config) {
+                                eprintln!("Warning: Failed to update registry after disabling last complete pair: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Json(serde_json::json!({
+                "account_sid": account_sid, 
+                "enabled": enabled
+            })).into_response()
+        },
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

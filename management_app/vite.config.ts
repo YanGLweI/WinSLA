@@ -13,5 +13,13 @@ export default defineConfig({
   build: {
     outDir: 'src-tauri/frontend/dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // 为 JS/CSS 文件添加唯一 hash (包含时间戳)
+        entryFileNames: `assets/[name]-[hash].js`,
+        chunkFileNames: `assets/[name]-[hash].js`,
+        assetFileNames: `assets/[name]-[hash].[ext]`
+      }
+    }
   },
 })
