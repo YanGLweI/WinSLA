@@ -24,7 +24,7 @@ app.get('/api/status', (req, res) => {
     authStats.connections_accepted++;
     res.json({
         running: true,
-        version: "v2.2.6",
+        version: "v2.2.8",
         ...authStats
     });
 });
