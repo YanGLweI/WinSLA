@@ -1,5 +1,5 @@
 ﻿; WinSLA - Windows Dual-Account Authentication System
-; NSIS Installer Script v2.2.6
+; NSIS Installer Script v2.2.8
 ; Feature: One-to-many pairing relationship support
 
 !include "MUI2.nsh"
@@ -7,17 +7,17 @@
 !include "x64.nsh"
 
 ; ─── 基本信息 ───────────────────────────────────────────────
-Name "WinSLA v2.2.7"
-OutFile "WinSLA-v2.2.7-Setup.exe"
+Name "WinSLA v2.2.8"
+OutFile "WinSLA-v2.2.8-Setup.exe"
 InstallDir "$PROGRAMFILES64\WinSLA"
 InstallDirRegKey HKLM "Software\WinSLA" "InstallDir"
 RequestExecutionLevel admin
 Unicode true
 
 ; ─── 版本信息 ───────────────────────────────────────────────
-VIProductVersion "2.2.7.0"
-VIAddVersionKey "FileVersion" "2.2.7"
-VIAddVersionKey "FileDescription" "WinSLA - Windows Dual-Account Authentication System v2.2.7"
+VIProductVersion "2.2.8.0"
+VIAddVersionKey "FileVersion" "2.2.8"
+VIAddVersionKey "FileDescription" "WinSLA - Windows Dual-Account Authentication System v2.2.8"
 VIAddVersionKey "LegalCopyright" "MIT License - 2026 ylw"
 
 ; ─── 界面配置 ───────────────────────────────────────────────
@@ -70,16 +70,16 @@ Section "Core Files" SecCore
 
     ; 写入安装路径到注册表
     WriteRegStr HKLM "Software\WinSLA" "InstallDir" "$INSTDIR"
-    WriteRegStr HKLM "Software\WinSLA" "Version" "2.2.7"
-
+    WriteRegStr HKLM "Software\WinSLA" "Version" "2.2.8"
+    
     ; 创建卸载程序
     WriteUninstaller "$INSTDIR\uninstall.exe"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "DisplayName" "WinSLA - Dual-Account Authentication"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "UninstallString" "$INSTDIR\uninstall.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \\
-        "DisplayVersion" "2.2.7"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
+        "DisplayVersion" "2.2.8"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
         "Publisher" "ylw"
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinSLA" \
