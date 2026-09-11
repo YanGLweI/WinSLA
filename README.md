@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/language-Rust-orange" alt="Language" />
-  <img src="https://img.shields.io/badge/version-2.2.7-yellow" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.2.8-yellow" alt="Version" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
 </p>
 
@@ -26,13 +26,14 @@ WinSLA 是一个 Windows 系统级双账号认证登录代理。在 Active Direc
 
 - **双人双控**：两个不同用户分别输入各自 AD 域密码，两者均验证成功才允许登录
 - **真实验证**：通过 Windows `LogonUserW` API 进行真实密码验证（支持域账号/本地账号）
-- **密码过期处理**：主账号 / 审批人密码过期时自动弹出模态对话框，可直接在登录界面修改密码，改密成功后自动回填并继续登录（v2.2.5 起）
+- **密码过期处理**：主账号/审批人密码过期时自动弹出模态对话框，可直接在登录界面修改密码，改密成功后自动回填并继续登录（v2.2.5 起）
+- **配对规则安全机制**：禁用最后启用的配对规则时显示警告弹窗并自动启用 Windows 默认 Tile 作为安全兜底（v2.2.8）
 - **原生登录界面**：基于 Windows Credential Provider，在 LogonUI 安全桌面层提供原生双输入 Tile
 - **双 Tile 设计**：登录界面同时显示「双控登录」和「应急登录」两个 Tile
 - **服务桥接**：Windows Service 后台处理验证，CP 与服务通过 Named Pipe 安全通信
 - **失败锁定**：可配置的失败次数阈值与锁定时长，防止暴力破解
 - **应急覆盖**：支持授权管理员在紧急情况下单人登录（需填写原因并记录审计）
-- **离线缓存**：AD/LDAP网络不可达时可用本地缓存凭据进行应急验证（需预先配置）
+- **离线缓存**：AD/LDAP 网络不可达时可用本地缓存凭据进行应急验证（需预先配置）
 - **审计日志**：所有认证事件记录到本地数据库与日志
 - **集中管理**：管理端 GUI 提供仪表盘、配对规则、应急账号、审计日志、策略配置
 
@@ -148,7 +149,7 @@ cargo build --release
 
 #### 方式一：NSIS 安装程序（推荐）
 
-从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.2.7-Setup.exe`，以管理员身份运行。安装程序自动完成：
+从 [GitHub Releases](https://github.com/YanGLweI/WinSLA/releases) 下载 `WinSLA-v2.2.8-Setup.exe`，以管理员身份运行。安装程序自动完成：
 
 - 复制 DLL/EXE 到 `C:\Program Files\WinSLA`
 - 注册 Credential Provider CLSID 到 64 位注册表视图
